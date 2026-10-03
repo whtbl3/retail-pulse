@@ -14,6 +14,9 @@ install: ## Cài dependency theo uv.lock
 up: ## Bật Postgres và chờ healthcheck
 	$(COMPOSE) up -d --wait postgres
 
+ingest-full: up ## Load lại toàn bộ từ đầu
+	uv run ingest --full-refresh
+
 down: ## Tắt container (giữ dữ liệu)
 	$(COMPOSE) down
 

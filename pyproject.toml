@@ -24,6 +24,7 @@ dependencies = [
 [project.scripts]
 seed = "retail_pulse.generator.seed:main"
 stream = "retail_pulse.generator.stream:main"
+ingest = "retail_pulse.ingestion.pipelines:main"
 
 [build-system]
 requires = ["hatchling"]

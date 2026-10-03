@@ -12,6 +12,9 @@ wheels/
 # configuration datasource
 .env
 .env
+.dlt
 .dlt/secrets.toml
 *.p8
-*.pem
+*.pem.dlt/secrets.toml
+.snowflake
+.ruff_cache

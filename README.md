@@ -75,7 +75,8 @@ Across all tables, created_at and updated_at columns with timezone-aware timesta
 
 Understanding physical database design, data type selection, and constraint enforcement equips data engineers and analytics professionals with the necessary context to optimize downstream ELT/ETL jobs, diagnose query performance bottlenecks, and design robust data lakehouse ingestion layers.
 
-# High-Level Data Architecture
+# 2 Data Architecture
+## A. High-Level
 ```mermaid
 flowchart LR
   SRC[("Source<br/>OLTP database")]
@@ -122,7 +123,7 @@ flowchart LR
   class BI bi
   class ORC ops
 ```
-# Low-Level Data Architecture
+## B. Low-Level Data Architecture
 ```mermaid
 flowchart LR
   subgraph LOCAL["Local - Docker Compose"]
