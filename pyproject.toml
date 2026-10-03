@@ -1,0 +1,68 @@
+[project]
+name = "retail-pulse"
+version = "0.1.0"
+description = "Retail data pipeline: Postgres OLTP → dlt → Snowflake → dbt, orchestrated by Dagster"
+readme = "README.md"
+authors = [
+    { name = "PhucLH", email = "phuclhde@gmail.com" }
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "dagster>=1.13.25",
+    "dagster-dbt>=0.29.25",
+    "dagster-dlt>=0.29.25",
+    "dbt-core>=1.12.5",
+    "dbt-snowflake>=1.12.1",
+    "dlt[snowflake]>=1.30.0",
+    "faker>=40.40.0",
+    "great-expectations>=1.23.2",
+    "psycopg[binary]>=3.3.6",
+    "pydantic-settings>=2.15.0",
+    "sqlalchemy>=2.1.2",
+]
+
+[project.scripts]
+seed = "retail_pulse.generator.seed:main"
+stream = "retail_pulse.generator.stream:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/retail_pulse"]
+
+[dependency-groups]
+dev = [
+    "dagster-webserver>=1.13.25",
+    "pre-commit>=4.6.2",
+    "pyrefly>=1.3.2",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+    "sqlfluff>=4.3.0",
+    "sqlfluff-templater-dbt>=4.3.0",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.dagster]
+module_name = "retail_pulse.orchestration.definitions"
+code_location_name = "retail_pulse"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.sqlfluff.core]
+templater = "dbt"
+dialect = "snowflake"
+
+[tool.sqlfluff.templater.dbt]
+project_dir = "dbt"

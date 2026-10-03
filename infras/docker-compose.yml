@@ -1,0 +1,22 @@
+name: retail-pulse
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: retail-pulse-postgres
+    environment:
+      POSTGRES_USER: ${PG_USER:?set PG_USER in .env}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD in .env}
+      POSTGRES_DB: ${PG_DB:-retail_oltp}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4", "-c", "max_wal_senders=4"]
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retail -d retail_oltp"]
+      interval: 3s
+      retries: 10
+
+volumes:
+  pgdata:
