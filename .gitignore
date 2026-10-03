@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# configuration datasource
+.env
+.env
+.dlt
+.dlt/secrets.toml
+*.p8
+*.pem.dlt/secrets.toml
+.snowflake
+.ruff_cache
