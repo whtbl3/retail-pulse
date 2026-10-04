@@ -137,9 +137,7 @@ def seed_reference(session, rng: random.Random, args, start: date) -> dict:
                 "category_id": rng.choice(category_ids),
                 "brand_id": rng.choice(brand_ids),
                 "product_name": (
-                  f"{rng.choice(brand_names)} "
-                  f"{fake_en.word().title()} "
-                  f"{rng.choice(sizes)}"
+                    f"{rng.choice(brand_names)} {fake_en.word().title()} {rng.choice(sizes)}"
                 ),
                 "unit_price": vnd(price),
                 "unit_cost": vnd(price * rng.uniform(0.55, 0.85), step=100),
