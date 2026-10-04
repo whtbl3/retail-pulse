@@ -17,7 +17,14 @@ INCREMENTAL: dict[str, list[str]] = {
     "employee": ["id"],  # nguồn cho dim_employee SCD2
 }
 # Bảng nhỏ -> ghi đè toàn bộ mỗi lần chạy
-FULL_REFRESH = ["store", "category", "brand", "payment_method", "promotion", "promotion_product"]
+FULL_REFRESH: list[str] = [
+    "store",
+    "category",
+    "brand",
+    "payment_method",
+    "promotion",
+    "promotion_product",
+]
 
 
 def retail_source():
