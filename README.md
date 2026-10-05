@@ -31,7 +31,7 @@ While the logical model primarily deals with the structural representation of th
 Figure 4 shows our physical ERD diagram, detailing PostgreSQL data types, column nullability (NN for NOT NULL), primary keys, and foreign key relationships.
 Now we can translate the previous logical model into a set of DDL scripts, starting by defining custom ENUM types and establishing our database structure (Example 1).
 
-![Figure 4. Physical Model](./assets/diagrams/Physical_Model_Diagram.drawio.svg)
+![Figure 4. Physical Model](./assets/diagrams/RetailPulse_OLTP_Schema.svg)
 
 ```sql
 -- Define enumerated types for restricted categorical attributes
