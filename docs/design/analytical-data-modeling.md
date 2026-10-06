@@ -1,215 +1,229 @@
 # Analytical Data Modeling
 
-Mô hình phân tích (Kimball) cho warehouse, xây từ nguồn đã mô tả ở
-[operational-data-modeling.md](operational-data-modeling.md). Làm theo từng bước, mỗi bước được
-duyệt rồi mới sang bước kế.
+The analytical (Kimball) model for the warehouse, built from the source described in
+[operational-data-modeling.md](operational-data-modeling.md). It is designed step by step, and each
+step is approved before the next one starts.
 
-| Bước | Nội dung | Trạng thái |
+| Step | Content | Status |
 |---|---|---|
-| 1 | Identify the business process | Đã duyệt |
-| 2 | Clarify the grain | Đã duyệt |
-| 3 | Identify the dimensions | Đã duyệt |
-| 4 | Identify the facts | Đã duyệt |
-| 5 | Xác định loại dimension (Type 0/1/2...) | Đã duyệt |
-| 6 | Xác định loại bảng fact (transaction / periodic snapshot / accumulating) | Đã duyệt |
+| 1 | Identify the business process | Approved |
+| 2 | Clarify the grain | Approved |
+| 3 | Identify the dimensions | Approved |
+| 4 | Identify the facts | Approved |
+| 5 | Choose the dimension types (Type 0/1/2...) | Approved |
+| 6 | Choose the fact table type (transaction / periodic snapshot / accumulating) | Approved |
 
-## Bước 1. Business process
+## Step 1. Business process
 
-**Bán hàng tại quầy POS (checkout).** Đây là sự kiện `Buy` trong conceptual model, là nguồn
-duy nhất có đủ giá, số lượng, khuyến mãi, cửa hàng, thu ngân, phương thức thanh toán và thời điểm.
+**Point-of-sale (POS) checkout sales.** This is the `Buy` event in the conceptual model and the only
+source that carries price, quantity, promotion, store, cashier, payment method and time together.
 
-Câu hỏi kinh doanh quy trình này phải trả lời (từ bài toán ở README):
+The business questions this process must answer (from the problem statement in the README):
 
-- doanh thu và xu hướng theo thời gian;
-- hiệu quả theo sản phẩm, danh mục, thương hiệu;
-- hiệu quả theo cửa hàng (và thu ngân);
-- hiệu quả khuyến mãi;
-- lợi nhuận gộp theo thời gian, dùng giá vốn đúng tại thời điểm bán.
+- revenue and trends over time;
+- performance by product, category and brand;
+- performance by store (and cashier);
+- promotion effectiveness;
+- gross profit over time, using the cost that was valid at the time of sale.
 
-Khuyến mãi không tách thành process riêng: trong nguồn nó là ngữ cảnh của dòng hàng (sẽ là một dimension gắn vào fact), không phải sự kiện có thời điểm và số đo riêng. Mô hình "promotion coverage" (factless fact, dựng từ `promotion_product` × ngày) có thể thêm sau khi fact chính chạy ổn.
+Promotions are not a separate process. In the source a promotion is context for a line item (a
+dimension attached to the fact), not an event with its own time and measures. A "promotion coverage"
+model (factless fact built from `promotion_product` × date) can be added once the main fact works.
 
-Không thuộc quy trình này (ngoài phạm vi): tồn kho (`Stocks`), đổi trả và hủy giao dịch (chỉ phân
-tích giao dịch `completed`, xem Project-Spec mục 7.3).
+Out of scope for this process: inventory (`Stocks`), returns and cancellations (only `completed`
+transactions are analyzed, see Project-Spec section 7.3).
 
-## Bước 2. Grain
+## Step 2. Grain
 
-**Một dòng cho mỗi dòng hàng của hóa đơn, tức mỗi `sales_transaction_item`
-(`transaction_id`, `line_number`), chỉ giao dịch `completed`.**
+**One row per invoice line, i.e. per `sales_transaction_item`
+(`transaction_id`, `line_number`), `completed` transactions only.**
 
-Lý do: đây là mức chi tiết nhỏ nhất của nguồn, nên mọi câu hỏi ở bước 1 đều tổng hợp được từ đó mà
-không mất thông tin. Hệ quả cần biết:
+Reason: this is the smallest level of detail in the source, so every question from step 1 can be
+aggregated from it without losing information. Consequences:
 
-- `transaction_id` nằm trong fact dưới dạng degenerate dimension; chỉ số theo hóa đơn (basket size, giá trị trung bình mỗi đơn) làm bằng một mart tổng hợp từ fact này, không đổi grain;
-- thuộc tính của hóa đơn (cửa hàng, thu ngân, phương thức thanh toán, thời điểm) lặp lại trên mọi
-  dòng hàng của cùng hóa đơn; số hóa đơn phải đếm bằng `COUNT(DISTINCT transaction_id)`;
-- nguồn lưu `regular_price` tại thời điểm bán trên dòng hàng, nhưng **không lưu giá vốn**; giá vốn
-  chỉ có ở `product.unit_cost`, và giá trị đó thay đổi theo thời gian. Muốn tính lợi nhuận gộp đúng
-  thì phải lấy phiên bản `product` có hiệu lực tại thời điểm bán (quyết định ở bước 3 và 5).
+- `transaction_id` lives in the fact as a degenerate dimension; invoice-level metrics (basket size,
+  average invoice value) come from an aggregate mart built on this fact, not from a different grain;
+- invoice attributes (store, cashier, payment method, time) repeat on every line of the same
+  invoice, so invoices must be counted with `COUNT(DISTINCT transaction_id)`;
+- the source stores `regular_price` at the time of sale on the line, but **not the cost**; cost only
+  exists in `product.unit_cost`, which changes over time. A correct gross profit needs the `product`
+  version that was valid at the time of sale (decided in steps 3 and 5).
 
-**Trạng thái giao dịch (đã chốt):** fact chỉ chứa giao dịch `completed`, không có cột status và không
-phân tích đổi trả. Việc một đơn đổi trạng thái sau khi đã nạp (ví dụ `completed` sang `returned`)
-nằm ngoài phạm vi: coi hóa đơn không đổi sau khi ghi.
+**Transaction status (decided):** the fact contains only `completed` transactions, has no status
+column and does no return analysis. An order changing status after it was loaded (for example
+`completed` to `returned`) is out of scope: invoices are treated as unchanged once written.
 
-## Bước 3. Dimensions
+## Step 3. Dimensions
 
-Mỗi dimension trả lời "ai, cái gì, ở đâu, khi nào, thế nào" của một dòng hàng. Với grain ở bước 2,
-có 7 dimension và 2 degenerate dimension. Loại SCD của từng dimension để bước 5.
+Each dimension answers "who, what, where, when, how" for a line item. With the grain from step 2
+there are 7 dimensions and 2 degenerate dimensions. The SCD type of each dimension is decided in
+step 5.
 
-| Dimension | Trả lời | Nguồn | Thuộc tính đề xuất |
+| Dimension | Answers | Source | Proposed attributes |
 |---|---|---|---|
-| `dim_date` | Khi nào (ngày) | sinh từ lịch, không có trong nguồn | ngày, năm, quý, tháng, tuần, thứ, cuối tuần |
-| `dim_time` | Khi nào (giờ trong ngày) | sinh sẵn 1.440 dòng (mỗi phút) | giờ, phút, khung giờ (sáng/trưa/chiều/tối) |
-| `dim_product` | Bán cái gì | `product` + `category` + `brand` | SKU, tên, danh mục, thương hiệu, giá bán, giá vốn |
-| `dim_store` | Bán ở đâu | `store` (qua `sales_transaction.store_id`) | tên cửa hàng, địa chỉ, số điện thoại |
-| `dim_employee` | Ai thu ngân | `employee` | họ tên, cửa hàng đang làm, ngày vào làm, ngày nghỉ việc |
-| `dim_payment_method` | Thanh toán thế nào | `payment_method` | tên phương thức |
-| `dim_promotion` | Khuyến mãi nào | `promotion` | loại (phần trăm hoặc số tiền cố định), giá trị, ngày bắt đầu, ngày kết thúc, nhãn hiển thị |
+| `dim_date` | When (date) | generated from the calendar, not in the source | date, year, quarter, month, week, weekday, weekend flag |
+| `dim_time` | When (time of day) | pre-generated, 1,440 rows (one per minute) | hour, minute, day part (morning/noon/afternoon/evening) |
+| `dim_product` | What was sold | `product` + `category` + `brand` | SKU, name, category, brand, price, cost |
+| `dim_store` | Where | `store` (via `sales_transaction.store_id`) | store name, address, phone number |
+| `dim_employee` | Which cashier | `employee` | name, current store, start date, end date |
+| `dim_payment_method` | How it was paid | `payment_method` | method name |
+| `dim_promotion` | Which promotion | `promotion` | type (percentage or fixed amount), value, start date, end date, display label |
 
-Degenerate dimension (nằm thẳng trong fact, không có bảng riêng): `transaction_id` và `line_number`.
+Degenerate dimensions (stored directly in the fact, no table of their own): `transaction_id` and
+`line_number`.
 
-Các điểm đã suy ra từ nguồn:
+Points derived from the source:
 
-- **Category và brand gộp vào `dim_product`** (star schema, không snowflake). Nguồn tách chúng ra
-  chỉ để đạt 3NF, còn ở mô hình phân tích thì không cần.
-- **Cửa hàng của hóa đơn khác cửa hàng của nhân viên.** `sales_transaction.store_id` là nơi bán;
-  `employee.store_id` là nơi nhân viên đang làm và có thể đổi. Fact giữ khóa `dim_store` theo hóa
-  đơn; cửa hàng của nhân viên chỉ là thuộc tính của `dim_employee`.
-- **`dim_product` chứa giá vốn và giá bán**, vì đó là thứ thay đổi theo thời gian và là lý do cần
-  history (bước 2).
-- **Không có dimension cho trạng thái giao dịch**, vì fact chỉ chứa `completed` và việc đổi trạng thái
-  đơn sau khi nạp nằm ngoài phạm vi (xem bước 2).
-- **`dim_promotion` không có tên** vì nguồn không có cột tên, nên sinh cột nhãn hiển thị từ loại và
-  giá trị (ví dụ "Giảm 10%", "Giảm 20.000đ").
+- **Category and brand are folded into `dim_product`** (star schema, not snowflake). The source
+  separates them only to reach 3NF; the analytical model does not need that.
+- **The store of the invoice differs from the store of the employee.** `sales_transaction.store_id`
+  is where the sale happened; `employee.store_id` is where the employee currently works and can
+  change. The fact keeps the `dim_store` key of the invoice; the employee's store is only an
+  attribute of `dim_employee`.
+- **`dim_product` holds cost and price**, because they change over time and are the reason history
+  is needed (step 2).
+- **There is no dimension for transaction status**, because the fact only holds `completed` and
+  status changes after loading are out of scope (see step 2).
+- **`dim_promotion` has no name** because the source has no name column, so a display label is
+  generated from the type and value (for example "Giảm 10%", "Giảm 20.000đ", i.e. "10% off",
+  "20,000đ off").
 
-Các quyết định đã chốt:
+Decisions made:
 
-1. **Thêm `dim_time`, giữ `transaction_ts` trong fact.** Seed sinh giờ bán từ 7h đến 21h, cao điểm
-   quanh 18h, nên phân tích theo khung giờ có ý nghĩa. Tách ngày và giờ thành hai dimension nhỏ thay
-   vì một dimension theo từng phút của cả năm. `transaction_ts` vẫn phải nằm trong fact vì phép nối
-   vào phiên bản lịch sử của `dim_product` cần thời điểm chính xác, `date_key` + `time_key` không
-   thay được.
-2. **Giữ thông tin cá nhân trong `dim_employee`** (ngày sinh, địa chỉ, số điện thoại, lương) để dành
-   cho phần thực hành bảo mật dữ liệu sau. Khi viết dbt, gắn nhãn `meta: {pii: true}` cho các cột
-   này trong file YAML để sau áp masking policy theo nhãn.
-3. **Dòng hàng không khuyến mãi dùng thành viên cố định `-1` "No promotion"**, nên khóa trong fact
-   không bao giờ rỗng. Thêm thành viên `-2` "Unknown" cho khóa chưa có trong dimension (dữ liệu đến
-   muộn); cùng quy ước `-2` cho các dimension khác.
+1. **Add `dim_time` and keep `transaction_ts` in the fact.** The seed generates sale times from 07:00
+   to 21:00 with a peak around 18:00, so analysis by time band is meaningful. Date and time are two
+   small dimensions instead of one dimension per minute of the whole year. `transaction_ts` must
+   stay in the fact because joining to the history of `dim_product` needs the exact time;
+   `date_key` + `time_key` cannot replace it.
+2. **Keep personal data in `dim_employee`** (date of birth, address, phone number, salary) to be
+   used later for data security exercises. When writing dbt, tag these columns with
+   `meta: {pii: true}` in the YAML so masking policies can be applied by tag later.
+3. **Line items without a promotion use the fixed member `-1` "No promotion"**, so the key in the
+   fact is never null. Add a member `-2` "Unknown" for keys that are not yet in the dimension
+   (late-arriving data); the same `-2` convention applies to the other dimensions.
 
-Ghi chú chuyển sang bước 5: `salary` thay đổi thường xuyên, nếu đưa vào cột theo dõi lịch sử thì mỗi
-lần tăng lương sinh một phiên bản nhân viên. Chỉ nên theo dõi `store_id`; `salary` cập nhật đè.
+Note carried to step 5: `salary` changes often. If it were a tracked column, every raise would
+create a new employee version. Only `store_id` should be tracked; `salary` is overwritten.
 
-## Bước 4. Facts
+## Step 4. Facts
 
-Fact `fact_sales`, grain là một dòng hàng của hóa đơn `completed`. Tất cả số đo tiền và số lượng đều
-cộng dồn được (additive) trừ hai đơn giá `regular_price` và `unit_cost`. Các tỷ lệ (biên lợi nhuận
-gộp, giá trị trung bình mỗi hóa đơn) không lưu vào fact; định nghĩa thành metric trong Preset, ví dụ
-`SUM(gross_profit) / SUM(net_amount)`, để không ai vô tình lấy trung bình của các tỷ lệ.
+The fact is `fact_sales`, with one `completed` invoice line per row. All money and quantity measures
+are additive except the two unit prices, `regular_price` and `unit_cost`. Ratios (gross margin,
+average invoice value) are not stored in the fact; they are defined as metrics in Preset, for
+example `SUM(gross_profit) / SUM(net_amount)`, so nobody averages ratios by accident.
 
-**Khóa và thuộc tính trong fact:** `date_key`, `time_key`, `product_key`, `store_key`, `employee_key`,
-`payment_method_key`, `promotion_key`, `transaction_id`, `line_number`, `transaction_ts`.
+**Keys and attributes in the fact:** `date_key`, `time_key`, `product_key`, `store_key`,
+`employee_key`, `payment_method_key`, `promotion_key`, `transaction_id`, `line_number`,
+`transaction_ts`.
 
-**Số đo:**
+**Measures:**
 
-| Số đo | Cách có được | Cộng dồn |
+| Measure | How it is obtained | Additive |
 |---|---|---|
-| `quantity` | nguồn | có |
-| `regular_price` | nguồn (giá tại lúc bán) | không, đơn giá |
-| `unit_cost` | giá vốn của phiên bản product có hiệu lực tại `transaction_ts` | không, đơn giá |
-| `gross_amount` | `quantity × regular_price` | có |
-| `discount_amount` | giảm giá khuyến mãi, công thức bên dưới | có |
-| `coupon_amount` | nguồn | có |
-| `net_amount` | `gross_amount − discount_amount − coupon_amount` | có |
-| `cost_amount` | `quantity × unit_cost` | có |
-| `gross_profit` | `net_amount − cost_amount` | có |
+| `quantity` | source | yes |
+| `regular_price` | source (price at the time of sale) | no, unit price |
+| `unit_cost` | cost of the product version valid at `transaction_ts` | no, unit price |
+| `gross_amount` | `quantity × regular_price` | yes |
+| `discount_amount` | promotion discount, formula below | yes |
+| `coupon_amount` | source | yes |
+| `net_amount` | `gross_amount − discount_amount − coupon_amount` | yes |
+| `cost_amount` | `quantity × unit_cost` | yes |
+| `gross_profit` | `net_amount − cost_amount` | yes |
 
-### Quy ước khuyến mãi và coupon
+### Promotion and coupon conventions
 
-Nguồn không lưu số tiền giảm của khuyến mãi (dòng hàng chỉ có `promotion_id`) và không nói tính theo
-đơn vị hay theo dòng, nên quy ước sau được chốt ở đây:
+The source does not store the discount amount of a promotion (a line only has `promotion_id`) and
+does not say whether it applies per unit or per line, so the following convention is fixed here:
 
-- **Khuyến mãi tính theo đơn vị**, nhân với số lượng:
-  - phần trăm: `discount_amount = quantity × regular_price × amount / 100`
-  - số tiền cố định: `discount_amount = quantity × MIN(amount, regular_price)`
-  Hàm `MIN` chặn trường hợp giá sau giảm bị âm. Quy ước này khớp với seed: khuyến mãi số tiền cố
-  định chỉ gán cho sản phẩm có `unit_price >= amount × 4`, tức mức giảm luôn nhỏ hơn giá một đơn vị.
-- **`coupon_amount` tính theo dòng**, không nhân với số lượng. Seed gán một lần cho cả dòng.
-- Khi sửa `seed.py` hoặc `stream.py`, phải giữ đúng hai quy ước này.
+- **A promotion applies per unit**, multiplied by the quantity:
+  - percentage: `discount_amount = quantity × regular_price × amount / 100`
+  - fixed amount: `discount_amount = quantity × MIN(amount, regular_price)`
 
-### Giá vốn ghi vào fact lúc nạp
+  `MIN` prevents the discounted price from going negative. This matches the seed: fixed-amount
+  promotions are only assigned to products with `unit_price >= amount × 4`, so the discount is
+  always smaller than the price of one unit.
+- **`coupon_amount` applies per line**, not multiplied by the quantity. The seed assigns it once for
+  the whole line.
+- When changing `seed.py` or `stream.py`, both conventions must be preserved.
 
-`unit_cost` và `cost_amount` được ghi vào fact lúc nạp. `unit_cost` phải lấy từ **phiên bản của
-`dim_product` có hiệu lực tại `transaction_ts`** (range join, bước 5), không lấy từ product hiện tại
-ở tầng silver: lấy từ bảng hiện tại thì đúng lúc nạp, nhưng khi chạy full refresh toàn bộ lịch sử bị
-tính lại theo giá vốn mới, đúng lỗi mà SCD2 sinh ra để tránh.
+### Cost is written to the fact at load time
 
-Lý do ghi vào fact:
+`unit_cost` and `cost_amount` are written to the fact at load time. `unit_cost` must come from the
+**`dim_product` version valid at `transaction_ts`** (range join, step 5), not from the current
+product in the silver layer: using the current table is correct at load time, but a full refresh
+would recompute the whole history with the new cost, which is exactly the error SCD2 exists to
+avoid.
 
-- Preset truy vấn đơn giản: lợi nhuận gộp chỉ cần `SUM` trên fact, không phải nối theo khoảng thời
-  gian mỗi lần mở dashboard.
-- Số đã báo cáo giữ nguyên; một hóa đơn chỉ được tính lại khi nạp lại.
-- Vẫn truy vết được: `product_key` trỏ đúng phiên bản sản phẩm, nên có thể kiểm tra chéo `unit_cost`
-  bằng cách nối.
+Why store it in the fact:
 
-Giới hạn cần biết: nếu nguồn sửa sai giá vốn của một ngày trong quá khứ thì fact không tự cập nhật,
-trừ khi chạy full refresh. Với dự án portfolio thì chấp nhận được.
+- Preset queries stay simple: gross profit is a `SUM` on the fact, with no time-range join every
+  time a dashboard opens.
+- Reported numbers stay stable; an invoice is only recomputed when it is loaded again.
+- It is still traceable: `product_key` points to the exact product version, so `unit_cost` can be
+  cross-checked with a join.
 
-### Kiểm tra dữ liệu (dbt test)
+Known limit: if the source corrects a cost in the past, the fact does not update unless a full
+refresh runs. That is acceptable for a portfolio project.
 
-`net_amount >= 0` và `discount_amount <= gross_amount`. Hai test này bắt ngay khi generator hoặc
-stream vi phạm quy ước khuyến mãi.
+### Data tests (dbt)
 
-## Bước 5. Loại dimension (SCD)
+`net_amount >= 0` and `discount_amount <= gross_amount`. These two tests catch the generator or the
+stream violating the promotion convention.
 
-| Dimension | Loại | Lý do |
+## Step 5. Dimension types (SCD)
+
+| Dimension | Type | Reason |
 |---|---|---|
-| `dim_date` | Type 0 | sinh từ lịch, không bao giờ đổi |
-| `dim_time` | Type 0 | sinh sẵn 1.440 phút, không bao giờ đổi |
-| `dim_product` | **Type 2** | giá vốn và giá bán đổi theo thời gian, cần để tính lợi nhuận gộp đúng lúc bán |
-| `dim_employee` | **Type 2** | cửa hàng của nhân viên đổi, cần biết nhân viên làm ở đâu lúc bán |
-| `dim_store` | Type 1 | `stream.py` không đổi cửa hàng; nếu nguồn sửa thì ghi đè |
-| `dim_payment_method` | Type 1 | danh mục nhỏ, ghi đè |
-| `dim_promotion` | Type 1 | chương trình có ngày bắt đầu và kết thúc cố định, ghi đè nếu nguồn sửa (hóa đơn cũ giữ nguyên, xem bên dưới) |
+| `dim_date` | Type 0 | generated from the calendar, never changes |
+| `dim_time` | Type 0 | pre-generated 1,440 minutes, never changes |
+| `dim_product` | **Type 2** | cost and price change over time and are needed for gross profit at the time of sale |
+| `dim_employee` | **Type 2** | the employee's store changes, and we need to know where they worked at the time of sale |
+| `dim_store` | Type 1 | `stream.py` does not change stores; overwritten if the source corrects them |
+| `dim_payment_method` | Type 1 | small lookup, overwritten |
+| `dim_promotion` | Type 1 | a program has fixed start and end dates; overwritten if the source corrects it (old invoices stay unchanged, see below) |
 
-Mọi dimension có thành viên `-2` "Unknown"; riêng `dim_promotion` còn có `-1` "No promotion"
-(bước 3).
+Every dimension has a `-2` "Unknown" member; `dim_promotion` also has `-1` "No promotion" (step 3).
 
-### Cột nào tạo phiên bản mới (Type 2)
+### Which columns create a new version (Type 2)
 
-- **`dim_product`:** `unit_cost`, `unit_price`, `category_id`, `brand_id`. Tên sản phẩm cập nhật đè
-  (Type 1), vì thường chỉ đổi khi sửa chính tả. Nguồn hiện không đổi danh mục và thương hiệu nên
-  theo dõi hai cột này không sinh thêm phiên bản; nếu sau này một sản phẩm đổi ngành hàng thì doanh
-  thu quá khứ theo danh mục vẫn đúng. Danh sách cột theo dõi đổi được với chi phí thấp: lịch sử nằm
-  trong RAW nên chỉ cần sửa code rồi chạy full refresh của dbt.
-- **`dim_employee`:** chỉ `store_id`. `salary` và các cột còn lại cập nhật đè (Type 1) bằng giá trị
-  mới nhất, vì lương đổi thường xuyên và mỗi lần tăng lương sẽ sinh thêm một phiên bản không cần
-  thiết. Các cột cá nhân gắn nhãn `meta: {pii: true}` (bước 3).
+- **`dim_product`:** `unit_cost`, `unit_price`, `category_id`, `brand_id`. The product name is
+  overwritten (Type 1), because it usually only changes when a typo is fixed. The source does not
+  currently change category or brand, so tracking those two columns creates no extra versions; if a
+  product later changes category, past revenue by category stays correct. The list of tracked
+  columns is cheap to change: history lives in RAW, so it is enough to edit the code and run a dbt
+  full refresh.
+- **`dim_employee`:** only `store_id`. `salary` and the other columns are overwritten (Type 1) with
+  the latest value, because salary changes often and every raise would create an unnecessary
+  version. Personal columns are tagged `meta: {pii: true}` (step 3).
 
-### Cách dựng phiên bản từ RAW
+### How versions are built from RAW
 
-Ingest ghi mỗi lần một dòng `product` hoặc `employee` đổi thành một dòng mới trong RAW (cùng `id`,
-`updated_at` mới; xem Project-Spec mục 9.2). SCD2 dựng thẳng từ các dòng đó bằng window function,
-không dùng `dbt snapshot`: RAW đã giữ đủ các phiên bản, snapshot chỉ thêm một bản sao lịch sử thứ hai
-và không dựng lại được, còn window function idempotent (`dbt build --full-refresh` bao nhiêu lần
-cũng ra cùng kết quả). Về độ chi tiết thì hai cách như nhau.
+Ingestion writes each changed `product` or `employee` row as a new row in RAW (same `id`, newer
+`updated_at`; see Project-Spec section 9.2). SCD2 is built directly from those rows with window
+functions, without `dbt snapshot`: RAW already holds every version, a snapshot would only add a
+second copy of history that cannot be rebuilt, while window functions are idempotent (`dbt build
+--full-refresh` gives the same result no matter how many times it runs). Both approaches have the
+same level of detail.
 
-0. **Staging khử trùng lặp trước.** Cursor incremental có thể nạp lại các dòng nằm ngay ở biên, nên
-   staging giữ một dòng cho mỗi (`id`, `updated_at`):
+0. **Staging deduplicates first.** The incremental cursor can reload rows right at the boundary, so
+   staging keeps one row per (`id`, `updated_at`):
    `qualify row_number() over (partition by id, updated_at order by _dlt_load_id desc) = 1`.
-1. Sắp các dòng của một khóa nghiệp vụ theo `updated_at`.
-2. **So từng dòng với dòng liền trước bằng `LAG` và `IS DISTINCT FROM`**, chỉ giữ dòng mà cột theo
-   dõi đổi. Không dùng `DISTINCT` hay gom nhóm theo giá trị: chuỗi giá A → B → A phải ra 3 phiên
-   bản, gom nhóm sẽ gộp hai lần A và làm sai khoảng hiệu lực. `IS DISTINCT FROM` cũng xử lý đúng
-   `NULL`.
-3. `valid_from` = `updated_at` của dòng đó; `valid_to` = `valid_from` của phiên bản kế tiếp.
-   Phiên bản cuối có `valid_to = '9999-12-31'` và `is_current = true`.
-4. **Phiên bản đầu tiên của mỗi khóa có `valid_from = '1900-01-01'`.** Dòng đầu tiên trong RAW chỉ
-   xuất hiện khi ingest lần đầu, sau toàn bộ giao dịch lịch sử của seed; nếu dùng `updated_at` thật
-   thì 100.000 đơn seed không khớp phiên bản nào.
-5. **Cột Type 1 phải lấy giá trị mới nhất của khóa.** Sau bước 2, các cột như `salary` hay
-   `product_name` vẫn mang giá trị tại thời điểm của dòng phiên bản, tức là thành "Type 2 không đầy
-   đủ". Phải nối với dòng mới nhất của khóa và ghi đè các cột này lên mọi phiên bản.
+1. Order the rows of one business key by `updated_at`.
+2. **Compare each row with the previous one using `LAG` and `IS DISTINCT FROM`**, and keep only the
+   rows where a tracked column changed. Do not use `DISTINCT` or group by value: a price sequence
+   A → B → A must produce 3 versions, and grouping would merge the two A's and make the validity
+   interval wrong. `IS DISTINCT FROM` also handles `NULL` correctly.
+3. `valid_from` = `updated_at` of that row; `valid_to` = `valid_from` of the next version. The last
+   version has `valid_to = '9999-12-31'` and `is_current = true`.
+4. **The first version of each key has `valid_from = '1900-01-01'`.** The first row in RAW only
+   appears at the first ingest, after all the seed's historical transactions; with the real
+   `updated_at`, the 100,000 seeded orders would not match any version.
+5. **Type 1 columns must take the latest value of the key.** After step 2, columns such as `salary`
+   or `product_name` still carry the value at the time of the version row, which makes them an
+   "incomplete Type 2". Join with the latest row of the key and overwrite these columns on every
+   version.
 
-Khuôn mẫu cho `dim_employee` (`dim_product` dùng cùng khuôn, chỉ đổi điều kiện so sánh thành
+Template for `dim_employee` (`dim_product` uses the same template, with the comparison changed to
 `unit_cost`, `unit_price`, `category_id`, `brand_id`):
 
 ```sql
@@ -231,7 +245,7 @@ select
     {{ dbt_utils.generate_surrogate_key(['v.id', 'v.updated_at']) }} as employee_key,
     v.id as employee_id,
     v.store_id,                                           -- Type 2
-    l.first_name, l.last_name, l.salary, l.end_date,      -- Type 1: giá trị mới nhất
+    l.first_name, l.last_name, l.salary, l.end_date,      -- Type 1: latest value
     case when row_number() over (partition by v.id order by v.updated_at) = 1
          then '1900-01-01'::timestamp_tz else v.updated_at end as valid_from,
     coalesce(lead(v.updated_at) over (partition by v.id order by v.updated_at),
@@ -241,49 +255,51 @@ from versions v
 join latest l on l.id = v.id
 ```
 
-Khóa thay thế (surrogate key) của dimension: băm từ khóa nghiệp vụ và `updated_at` của phiên bản.
-Quy ước biên: `valid_from <= transaction_ts < valid_to`.
+Surrogate key of the dimension: a hash of the business key and the `updated_at` of the version.
+Boundary convention: `valid_from <= transaction_ts < valid_to`.
 
-Hệ quả:
+Consequences:
 
-- **RAW là nơi duy nhất giữ lịch sử.** Không chạy dlt với `refresh="drop_sources"`/`drop_resources`
-  hay `replace` trên bảng `product` và `employee`, vì sẽ mất toàn bộ SCD2.
-- **`dim_promotion` Type 1:** `discount_amount` được tính và ghi vào fact lúc nạp, giống `unit_cost`,
-  nên sửa một khuyến mãi thì hóa đơn cũ giữ nguyên, chỉ đổi khi chạy full refresh (cùng giới hạn đã
-  ghi ở bước 4).
+- **RAW is the only place that holds history.** Never run dlt with
+  `refresh="drop_sources"`/`drop_resources` or `replace` on the `product` and `employee` tables,
+  because all SCD2 history would be lost.
+- **`dim_promotion` is Type 1:** `discount_amount` is computed and written to the fact at load time,
+  like `unit_cost`, so correcting a promotion leaves old invoices unchanged; they only change on a
+  full refresh (the same limit as in step 4).
 
-### Nối fact vào phiên bản
+### Joining the fact to a version
 
-`fact_sales` nối `dim_product` và `dim_employee` bằng khóa nghiệp vụ (`product_id`, `employee_id`)
-và khoảng `valid_from <= transaction_ts < valid_to`. Fact giữ `product_key` và `employee_key` trỏ
-đúng phiên bản.
+`fact_sales` joins `dim_product` and `dim_employee` on the business key (`product_id`,
+`employee_id`) and the interval `valid_from <= transaction_ts < valid_to`. The fact keeps
+`product_key` and `employee_key` pointing to the exact version.
 
-Giới hạn (đã ghi ở Project-Spec mục 9.2): mỗi cycle `stream.py` phải được ingest trước cycle kế tiếp,
-nếu không phiên bản trung gian bị mất.
+Limit (also in Project-Spec section 9.2): every `stream.py` cycle must be ingested before the next
+cycle, otherwise intermediate versions are lost.
 
-## Bước 6. Loại bảng fact
+## Step 6. Fact table type
 
-| Loại | Dùng cho | Áp dụng ở đây |
+| Type | Used for | Applies here |
 |---|---|---|
-| **Transaction fact** | mỗi dòng là một sự kiện xảy ra tại một thời điểm | **`fact_sales`** |
-| Periodic snapshot | trạng thái định kỳ (ví dụ tồn kho cuối ngày) | không dùng, tồn kho ngoài phạm vi |
-| Accumulating snapshot | quy trình có nhiều mốc thời gian, dòng được cập nhật khi qua mốc (đặt hàng → giao hàng → thanh toán) | không dùng, nguồn không có vòng đời nhiều mốc |
-| Factless fact | ghi nhận quan hệ, không có số đo | để sau: promotion coverage |
+| **Transaction fact** | each row is an event that happened at one point in time | **`fact_sales`** |
+| Periodic snapshot | state at regular intervals (for example end-of-day inventory) | not used, inventory is out of scope |
+| Accumulating snapshot | a process with several milestones, where the row is updated as it passes each one (order → shipment → payment) | not used, the source has no multi-milestone lifecycle |
+| Factless fact | records a relationship, no measures | later: promotion coverage |
 
-**`fact_sales` là transaction fact.** Mỗi dòng hàng là một sự kiện bán tại `transaction_ts`, sinh ra
-một lần và không đổi sau đó. Đặc điểm:
+**`fact_sales` is a transaction fact.** Each line item is a sale event at `transaction_ts`, created
+once and unchanged afterwards. Characteristics:
 
-- grain nguyên tử (bước 2), số đo cộng dồn được (bước 4), dày: mọi dòng đều có đủ số đo;
-- nạp incremental theo (`transaction_id`, `line_number`); đơn không đổi sau khi ghi nên không cần
-  xử lý xóa hay cập nhật;
-- mỗi dòng gắn với thời gian qua `date_key` và `time_key`, và giữ `transaction_ts` để nối phiên bản
-  SCD2 (bước 5).
+- atomic grain (step 2), additive measures (step 4), dense: every row has all its measures;
+- loaded incrementally by (`transaction_id`, `line_number`); orders do not change after being
+  written, so no delete or update handling is needed;
+- each row is tied to time through `date_key` and `time_key`, and keeps `transaction_ts` to join SCD2
+  versions (step 5).
 
-Các fact khác, cùng nguồn `fact_sales`, làm sau khi `fact_sales` chạy ổn:
+Other facts, built from the same source as `fact_sales`, to be done once `fact_sales` works:
 
-- **`fact_sales_transaction`** (mart tổng hợp, grain một hóa đơn): basket size, giá trị trung bình
-  mỗi hóa đơn. Dựng từ `fact_sales`, không đổi grain của `fact_sales`.
-- **Promotion coverage** (factless fact): sản phẩm nào đang có khuyến mãi nhưng không bán được.
-  Dựng từ `promotion_product` × `dim_date` trong khoảng `start_date`–`end_date`.
+- **`fact_sales_transaction`** (aggregate mart, one invoice per row): basket size and average
+  invoice value. Built from `fact_sales`, without changing the grain of `fact_sales`.
+- **Promotion coverage** (factless fact): which products are on promotion but not selling. Built
+  from `promotion_product` × `dim_date` between `start_date` and `end_date`.
 
-Hai fact bổ sung chỉ giữ trong doc này cho đến khi cần; chưa đưa vào Project-Spec mục 10.2.
+The two additional facts stay in this document until they are needed; they are not yet in
+Project-Spec section 10.2.
