@@ -4,7 +4,7 @@ DAYS ?= 365
 ROWS ?= 100000
 DLT_PIPELINE ?= retail_oltp_to_snowflake
 
-.PHONY: help install up down db-reset psql seed reseed stream stream-loop test lint
+.PHONY: help install up down snowflake-init snowflake-init-dry db-reset psql seed reseed stream stream-loop test lint
 
 help: ## Liệt kê các lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -15,8 +15,14 @@ install: ## Cài dependency theo uv.lock
 up: ## Bật Postgres và chờ healthcheck
 	$(COMPOSE) up -d --wait postgres
 
-ingest-full: up ## Load lại toàn bộ từ đầu
-	uv run ingest --full-refresh
+ingest: up ## Load Postgres sang Snowflake RAW (lần đầu load hết, sau đó incremental)
+	uv run ingest
+
+snowflake-init-dry: ## In các câu lệnh khởi tạo Snowflake, không kết nối
+	uv run snowflake-init --dry-run
+
+snowflake-init: ## Khởi tạo Snowflake (cần SNOWFLAKE_ACCOUNT, SNOWFLAKE_ADMIN_USER, SNOWFLAKE_ADMIN_PASSWORD)
+	uv run snowflake-init
 
 down: ## Tắt container (giữ dữ liệu)
 	$(COMPOSE) down

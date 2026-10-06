@@ -1,11 +1,11 @@
-# Phase 4 — Mô phỏng thay đổi giá sản phẩm (`stream.py`)
+# Phase 4 — Mô phỏng thay đổi nguồn (`stream.py`)
 
-Mục tiêu: tạo thay đổi nhỏ, thực tế trên bảng `product` để dlt load incremental và sau này
-dbt snapshot ghi lịch sử SCD2 cho `dim_product`.
+Mục tiêu: tạo thay đổi nhỏ, thực tế trên bảng `product` (giá) và `employee` (chuyển cửa hàng) để dlt load
+incremental (append) và sau này dbt dựng lịch sử từ các phiên bản trong RAW.
 Thiết kế chi tiết: [design/data-generator.md](../design/data-generator.md) (Phần 2).
 
-`stream.py` **chỉ UPDATE `unit_cost` / `unit_price`** của product có sẵn. Không insert, không xóa,
-không đụng bảng khác, không tự set `updated_at` (trigger trong DB lo việc đó).
+`stream.py` **chỉ UPDATE** `unit_cost` / `unit_price` của product có sẵn và `store_id` của employee
+đang làm việc (`end_date` null). Không insert, không xóa, không đụng bảng khác, không tự set `updated_at` (trigger trong DB lo việc đó).
 
 ## Chạy
 
@@ -22,7 +22,7 @@ uv run stream --help              # xem mọi tham số và mặc định
 | `--cost-pct-min` / `--cost-pct-max` | 0.01 / 0.05 | Biên độ đổi giá vốn (tăng hoặc giảm) |
 | `--price-probability` | 0.10 | Xác suất một product được chọn đổi thêm giá bán |
 | `--price-pct-min` / `--price-pct-max` | 0.01 / 0.08 | Biên độ đổi giá bán |
-| `--cooldown-hours` | 24 | Bỏ qua product vừa đổi trong N giờ, 0 = tắt |
+| `--transfers` | 1 | Số employee chuyển cửa hàng mỗi cycle (luôn sang cửa hàng khác), 0 = tắt |
 | `--loop` / `--interval` | tắt / 30 giây | Chạy liên tục |
 | `--seed` | không | Random seed |
 
@@ -40,11 +40,12 @@ Ví dụ log:
 ## Kết nối với các phase khác
 
 ```text
-make stream  ->  product.updated_at mới  ->  uv run ingest (merge theo id)  ->  dbt snapshot (phase 5)
+make stream  ->  product.updated_at mới  ->  uv run ingest (append)  ->  dbt SCD2 (phase 5)
 ```
 
-`--cooldown-hours` đảm bảo một product không bị đổi nhiều lần giữa hai lần ingest + snapshot,
-vì snapshot chỉ thấy trạng thái cuối cùng tại lúc chạy.
+**Hạn chế:** con trỏ `updated_at` chỉ thấy trạng thái cuối của một dòng tại lúc ingest, nên mỗi cycle
+`stream.py` phải được ingest trước khi chạy cycle kế tiếp (nếu không, phiên bản trung gian bị mất).
+Nguồn cũng không có DELETE vì con trỏ không thấy dòng bị xóa.
 
 ## Kiểm tra
 

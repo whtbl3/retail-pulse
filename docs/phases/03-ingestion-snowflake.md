@@ -4,8 +4,18 @@ Mục tiêu: đưa dữ liệu OLTP sang Snowflake, lần đầu full load, các
 
 | Bảng | Cách load | Khóa / cursor |
 |---|---|---|
-| `sales_transaction`, `sales_transaction_item`, `product`, `employee` | merge + incremental | khóa chính / `updated_at` |
+| `sales_transaction`, `sales_transaction_item`, `product`, `employee` | incremental append | `updated_at` |
 | `store`, `category`, `brand`, `payment_method`, `promotion`, `promotion_product` | replace | toàn bảng |
+
+> **Append, không merge:** dòng đổi (`product`, `employee`) thành một dòng mới trong RAW, cùng
+> `id` nhưng `updated_at` mới, nên RAW giữ nhiều phiên bản và dbt dựng SCD2 từ đó. Hạn chế:
+> mỗi cycle `stream.py` phải được ingest trước cycle kế tiếp (con trỏ chỉ thấy trạng thái cuối),
+> và nguồn không có DELETE (con trỏ không thấy dòng bị xóa).
+
+> **Cảnh báo:** RAW là nơi duy nhất giữ lịch sử của `product` và `employee` (SCD2 dựng từ đó).
+> Vì vậy `ingest` không có cờ `--full-refresh`. Muốn làm lại từ đầu, dùng `make clean-ingest` (có
+> hỏi xác nhận) rồi chạy lại `make ingest`; việc đó **xóa toàn bộ lịch sử** nên chỉ làm khi chấp nhận
+> mất lịch sử.
 
 Chi tiết hợp đồng ingestion: [Project-Spec.md, mục 9](../Project-Spec.md#9-ingestion-specification).
 Code: `src/retail_pulse/ingestion/pipelines.py`, `src/retail_pulse/ingestion/clean.py`.
@@ -21,63 +31,28 @@ grep -v -- '-----' snowflake/dlt_loader.pub | tr -d '\n'; echo # Lưu mã vừa 
 
 ## 2. Tạo warehouse, database, role, user trên Snowflake
 
-```sql
-USE ROLE ACCOUNTADMIN;
-SELECT CURRENT_ACCOUNT();
+Toàn bộ nằm ở `infras/snowflake/init.sql` (resource monitor, warehouse `RETAIL_WH` XSMALL
+auto-suspend 60 giây, database `RETAIL_PULSE`, schema `RAW`, role `LOADER` và `TRANSFORMER`, user
+`DLT_LOADER` xác thực bằng key pair). File viết để chạy lại nhiều lần không lỗi.
 
--- Giới hạn chi phí
-CREATE RESOURCE MONITOR IF NOT EXISTS RETAIL_RM
-  WITH CREDIT_QUOTA = 10 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
-  TRIGGERS ON 80 PERCENT DO NOTIFY
-           ON 100 PERCENT DO SUSPEND;
-
-CREATE WAREHOUSE IF NOT EXISTS RETAIL_WH
-  WAREHOUSE_SIZE = XSMALL AUTO_SUSPEND = 60 AUTO_RESUME = TRUE
-  INITIALLY_SUSPENDED = TRUE RESOURCE_MONITOR = RETAIL_RM;
-
-CREATE DATABASE IF NOT EXISTS RETAIL_PULSE;
-CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.RAW;
-
--- Roles
-CREATE ROLE IF NOT EXISTS LOADER;
-CREATE ROLE IF NOT EXISTS TRANSFORMER;
-GRANT ROLE LOADER TO ROLE SYSADMIN;
-GRANT ROLE TRANSFORMER TO ROLE SYSADMIN;
-
--- LOADER: dlt ghi vào RAW
-GRANT USAGE ON WAREHOUSE RETAIL_WH TO ROLE LOADER;
-GRANT USAGE ON DATABASE RETAIL_PULSE TO ROLE LOADER;
-GRANT CREATE SCHEMA ON DATABASE RETAIL_PULSE TO ROLE LOADER;
-GRANT ALL ON SCHEMA RETAIL_PULSE.RAW TO ROLE LOADER;
-
--- TRANSFORMER: dbt đọc RAW, ghi các schema khác
-GRANT USAGE ON WAREHOUSE RETAIL_WH TO ROLE TRANSFORMER;
-GRANT USAGE ON DATABASE RETAIL_PULSE TO ROLE TRANSFORMER;
-GRANT CREATE SCHEMA ON DATABASE RETAIL_PULSE TO ROLE TRANSFORMER;
-GRANT USAGE ON SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
-GRANT SELECT ON ALL TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
-
--- User cho dlt
-CREATE USER IF NOT EXISTS DLT_LOADER
-  TYPE = SERVICE
-  RSA_PUBLIC_KEY = ''
-  DEFAULT_ROLE = LOADER
-  DEFAULT_WAREHOUSE = RETAIL_WH;
-GRANT ROLE LOADER TO USER DLT_LOADER;
-
-DESC USER DLT_LOADER;
+```bash
+make snowflake-init-dry   # in 22 câu lệnh, không kết nối Snowflake
+export SNOWFLAKE_ACCOUNT=...  SNOWFLAKE_ADMIN_USER=...  SNOWFLAKE_ADMIN_PASSWORD=...
+make snowflake-init       # chạy thật bằng ACCOUNTADMIN, public key lấy từ snowflake/dlt_loader.pub
 ```
 
-Sau khi chạy xong, kết quả trả về kèm `SHA256:...` là đã thành công.
+Kiểm tra: chạy `DESC USER DLT_LOADER;` trên Snowflake, nếu cột `RSA_PUBLIC_KEY_FP` có giá trị
+`SHA256:...` là key đã được gắn.
 
 Credential của dlt đặt trong `.dlt/secrets.toml` (không commit file này).
 
 ## 3. Full load lần đầu
 
 ```bash
-make ingest-full
+make ingest
 ```
+
+Lần đầu chưa có con trỏ incremental nên dlt load toàn bộ.
 
 ```bash
 Pipeline retail_oltp_to_snowflake load step finished in 18.71 seconds
@@ -105,7 +80,7 @@ Kết quả như trên là đã thành công.
 
 ```sql
 USE ROLE ACCOUNTADMIN;
-SHOW SCHEMAS IN DATABASE RETAIL_PULSE;   -- thấy RAW và RAW_STAGING (dlt tạo khi merge)
+SHOW SCHEMAS IN DATABASE RETAIL_PULSE;   -- thấy RAW (và RAW_STAGING nếu dlt cần)
 
 SELECT TABLE_NAME, ROW_COUNT
 FROM RETAIL_PULSE.INFORMATION_SCHEMA.TABLES
@@ -117,7 +92,7 @@ ORDER BY TABLE_NAME;
 ## 5. Các lần sau: incremental
 
 ```bash
-uv run ingest          # chỉ lấy dòng có updated_at mới hơn lần trước
+uv run ingest          # chỉ lấy dòng có updated_at mới hơn lần trước, ghi thêm (append)
 make clean-ingest      # dọn RAW + state dlt nếu muốn làm lại từ đầu (có hỏi xác nhận)
 ```
 

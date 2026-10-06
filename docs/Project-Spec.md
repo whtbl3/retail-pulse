@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Active |
-| Version | 1.0 |
+| Version | 1.1 |
 | Last updated | 2026-10-06 |
 | Current implementation priority | dbt project (phase 5) |
 
@@ -74,7 +74,7 @@ Replacing a finalized technology is out of scope unless the project owner explic
 ```mermaid
 flowchart LR
     GEN["Python generators<br/>seed + product changes"] --> PG[("PostgreSQL 16<br/>retail OLTP")]
-    PG -->|"dlt incremental ingestion"| RAW["Snowflake RAW"]
+    PG -->|"dlt incremental append (updated_at)"| RAW["Snowflake RAW<br/>append-only row versions"]
     RAW -->|"dbt"| STG["Staging"]
     STG --> INT["Intermediate"]
     INT --> MART["Marts / Gold"]
@@ -117,6 +117,7 @@ The following are intentionally excluded:
 - `fact_inventory_snapshot`;
 - Kubernetes;
 - enterprise-scale operational complexity; and
+- return and cancellation analysis; and
 - SCD history implemented in Python source generators.
 
 These exclusions keep the portfolio focused. They must not be reintroduced without an explicit
@@ -158,7 +159,8 @@ The source schema is normalized for OLTP usage. DDL and ORM definitions must rem
 - Transaction item `regular_price` captures the price at the time of sale.
 - Transaction item `quantity` and `line_number` must be positive.
 - A promotion attached to a transaction item must be eligible for that product.
-- Transaction status is one of `completed`, `cancelled`, or `returned`.
+- Transaction status is one of `completed`, `cancelled`, or `returned`. The source keeps the column,
+  but analytics consider only `completed` transactions.
 - Percentage promotions cannot exceed 100 percent.
 - Employee end dates cannot precede start dates.
 
@@ -181,13 +183,13 @@ Current default baseline:
 The seed process must refuse to overwrite an existing database unless reset behavior is explicitly
 requested.
 
-### 8.2 Product Change Simulator (`stream.py`)
+### 8.2 Source Change Simulator (`stream.py`)
 
 #### Purpose
 
-`stream.py` simulates low-frequency, realistic source-side changes to existing products. Its output
-provides incremental source changes for dlt and, later, successive records for the dbt product
-snapshot.
+`stream.py` simulates low-frequency, realistic source-side changes to existing products and to the
+store assignment of existing employees (store transfer). Its output provides incremental source
+changes for dlt and, later, successive versions for the product and employee history in dbt.
 
 It is a lightweight change simulator, not a reseed tool and not a high-volume event generator.
 
@@ -195,7 +197,7 @@ It is a lightweight change simulator, not a reseed tool and not a high-volume ev
 
 The simulator must:
 
-1. operate only on existing rows in `retail.product`;
+1. operate only on existing rows in `retail.product` and `retail.employee`;
 2. update `unit_cost` as the normal change type;
 3. update `unit_price` less frequently than `unit_cost`;
 4. select a small subset of products per cycle;
@@ -219,7 +221,10 @@ Defaults must favor safe local demonstration:
 - a small number of products per cycle;
 - cost-only changes in most cases;
 - price changes controlled by a low probability; and
-- no inserts, deletes, or changes to other tables.
+- a small number of employees (default one) transferred per cycle, only active employees
+  (`end_date` is null), always to a store different from the current one; and
+- no inserts, deletes, or changes to tables other than `product` and `employee`, and no employee
+  changes other than `store_id`.
 
 Exact CLI flag names, numeric bounds, default batch size, price-change probability, and interval
 remain implementation details until `stream.py` is implemented. They must be documented in
@@ -239,7 +244,8 @@ Given a seeded database, one simulator cycle is accepted when:
 - the configured number of distinct existing products is updated, capped by the available count;
 - most changed rows have a different `unit_cost`;
 - `unit_price` changes only according to the configured low-probability rule;
-- no table other than `retail.product` is changed;
+- no table other than `retail.product` and `retail.employee` is changed;
+- every transferred employee moves to a different existing store and receives a newer `updated_at`;
 - product identity and classification fields remain unchanged;
 - every changed row receives a newer `updated_at` from PostgreSQL;
 - all monetary constraints remain valid;
@@ -267,10 +273,10 @@ transaction rollback, and the product-only scope.
 
 | Source table | Strategy | Merge key / cursor |
 | --- | --- | --- |
-| `sales_transaction` | Incremental merge | `transaction_id` / `updated_at` |
-| `sales_transaction_item` | Incremental merge | (`transaction_id`, `line_number`) / `updated_at` |
-| `product` | Incremental merge | `id` / `updated_at` |
-| `employee` | Incremental merge | `id` / `updated_at` |
+| `sales_transaction` | Incremental append | `transaction_id` / `updated_at` |
+| `sales_transaction_item` | Incremental append | (`transaction_id`, `line_number`) / `updated_at` |
+| `product` | Incremental append | `id` / `updated_at` |
+| `employee` | Incremental append | `id` / `updated_at` |
 | `store` | Replace | Full table |
 | `category` | Replace | Full table |
 | `brand` | Replace | Full table |
@@ -278,8 +284,17 @@ transaction rollback, and the product-only scope.
 | `promotion` | Replace | Full table |
 | `promotion_product` | Replace | Full table |
 
-Incremental ingestion is phase 1. CDC is a later extension and must not block the initial end-to-end
-demo. Cleaning or full-refresh operations must preserve the `RAW` schema so existing Snowflake
+Tables with `updated_at` are loaded by incremental append, never merge, to reduce Snowflake compute.
+A changed `product` or `employee` row therefore lands as a new RAW row with the same key and a newer
+`updated_at`; the warehouse keeps every version that was ingested and dbt derives SCD2 from them.
+
+Known limitations of this approach:
+
+- every `stream.py` cycle must be ingested before the next cycle runs, because the cursor only sees
+  the latest state of a row at ingest time and intermediate versions are lost;
+- the source never deletes rows, because a query-based cursor cannot see deletes.
+
+Log-based CDC is out of scope. Cleaning or full-refresh operations must preserve the `RAW` schema so existing Snowflake
 grants remain valid; temporary `RAW_STAGING` artifacts may be cleaned separately.
 
 ## 10. Warehouse and dbt Specification
@@ -292,40 +307,74 @@ Mart models must expose stable analytics contracts to Preset.
 
 ### 10.2 Planned Gold Models
 
+The dimensional design (business process, grain, dimensions, facts, SCD types, fact type) is in
+[analytical-data-modeling.md](design/analytical-data-modeling.md); that document is authoritative
+for model details.
+
 | Model | Grain | History strategy |
 | --- | --- | --- |
-| `fact_sales` | One transaction item | No SCD |
+| `fact_sales` | One completed transaction item | Transaction fact, no SCD |
 | `dim_product` | One product version | SCD Type 2 |
 | `dim_employee` | One employee version | SCD Type 2 |
-| `dim_store` | One store | Static or Type 1 |
-| `dim_date` | One calendar date | Static |
-| `dim_promotion` | One promotion | Static or Type 1 |
-| `dim_payment_method` | One payment method | Static or Type 1 |
+| `dim_store` | One store | Type 1 |
+| `dim_date` | One calendar date | Type 0 (generated) |
+| `dim_time` | One minute of the day (1,440 rows) | Type 0 (generated) |
+| `dim_promotion` | One promotion, plus `-1` "No promotion" | Type 1 |
+| `dim_payment_method` | One payment method | Type 1 |
+
+Every dimension has an `-2` "Unknown" member. `transaction_id` and `line_number` are degenerate
+dimensions in `fact_sales`. An aggregate transaction-grain mart and a promotion-coverage factless
+fact are candidates for later and are not part of the current scope.
 
 ### 10.3 Fact Sales Contract
 
-`fact_sales` must use transaction-item grain. It should retain identifiers needed to trace a fact
-back to the source transaction and line number and provide dimension keys for date, product,
-employee, store, promotion, and payment method where applicable.
+`fact_sales` uses transaction-item grain and contains only `completed` transactions. It keeps
+`transaction_id`, `line_number` and `transaction_ts`, and has keys for date, time, product, store,
+employee, payment method and promotion.
 
-Measures should support at least quantity, regular sales value, discount value, net sales value,
-cost, and gross margin. The precise treatment of cancelled and returned transactions, promotion
-calculation, and unknown dimension members must be finalized before the mart is implemented.
+Measures: `quantity`, `regular_price`, `unit_cost`, `gross_amount`, `discount_amount`,
+`coupon_amount`, `net_amount`, `cost_amount`, `gross_profit`. All are additive except the two unit
+prices. Ratios such as gross margin are metrics in the BI layer, not fact columns.
+
+- `gross_amount = quantity * regular_price`;
+- `discount_amount` is per unit: percentage promotions give `quantity * regular_price * amount / 100`,
+  fixed-amount promotions give `quantity * MIN(amount, regular_price)`;
+- `coupon_amount` is per line, not multiplied by quantity;
+- `net_amount = gross_amount - discount_amount - coupon_amount`;
+- `unit_cost` comes from the `dim_product` version valid at `transaction_ts`, not from the current
+  product, and is stored at load time; `cost_amount = quantity * unit_cost` and
+  `gross_profit = net_amount - cost_amount`.
+
+The model is loaded incrementally on (`transaction_id`, `line_number`). Orders are treated as
+immutable once written; a status change after load is out of scope. dbt tests must check `net_amount >= 0` and
+`discount_amount <= gross_amount`. Known limit: a past correction at the source (such as a cost
+fix) does not update the fact until a full refresh.
 
 ### 10.4 SCD Type 2 Ownership
 
-SCD history belongs exclusively to dbt snapshots and downstream dbt models:
+SCD history belongs exclusively to dbt models built on the append-only RAW rows of `product` and
+`employee` (window functions over `updated_at`; no `dbt snapshot`):
 
-- `product`: Type 2 history is required, with `unit_cost` as the primary demonstrated change and
-  `unit_price` also tracked when it changes;
-- `employee`: Type 2 history is required for historically relevant changes such as store assignment
-  and employment attributes;
+- `product`: Type 2 history is required. Tracked columns are `unit_cost`, `unit_price`,
+  `category_id` and `brand_id`; other columns are overwritten with the latest value (Type 1);
+- `employee`: Type 2 history is required for store assignment. Only `store_id` is tracked; other
+  columns, including `salary`, are overwritten with the latest value (Type 1);
 - source-side Python code performs ordinary business updates only; and
 - source generators must never create SCD validity columns or historical duplicate rows.
 
-Snapshots should use source `updated_at` timestamps where appropriate. Snapshot configuration,
-surrogate key strategy, validity boundary conventions, and point-in-time fact joins must be stated
-in the dbt model documentation when implemented.
+A new version is created only when a tracked column differs from the previous row
+(`IS DISTINCT FROM` against `LAG`), so an A → B → A sequence yields three versions. The first
+version of every key is valid from `1900-01-01`. Staging must deduplicate rows reloaded at the
+incremental cursor boundary before versions are derived. The design is in
+[analytical-data-modeling.md](design/analytical-data-modeling.md); surrogate key strategy, validity
+boundaries and point-in-time fact joins must also be stated in the dbt model documentation.
+
+Consequences:
+
+- RAW is the only place that holds history. dlt must never run with
+  `refresh="drop_sources"`/`drop_resources` or `replace` on `product` and `employee`, because that
+  destroys all SCD2 history;
+- the dimension models are idempotent: `dbt build --full-refresh` always rebuilds the same result.
 
 ## 11. Orchestration Specification
 
@@ -335,8 +384,8 @@ dbt work as observable assets and preserve their native responsibilities.
 The initial orchestration scope is:
 
 1. run the PostgreSQL-to-Snowflake dlt ingestion;
-2. run dbt snapshots after successful ingestion;
-3. run dbt models and tests after successful snapshots; and
+2. run dbt models (including SCD2 dimensions) after successful ingestion;
+3. run dbt tests after the models build; and
 4. expose run status and materialization metadata through Dagster.
 
 Scheduling frequency, retry policy, sensors, alerting, and deployment topology are TBD. The product
@@ -400,8 +449,8 @@ dbt tests are required for transformed models. Great Expectations is optional an
 | 1 | PostgreSQL schema, ORM, and Docker Compose | Complete |
 | 2 | Historical seed generator | Complete |
 | 3 | dlt full and incremental ingestion to Snowflake RAW | Complete and working |
-| 4 | Product-only source change simulator | Complete |
-| 5 | dbt project, sources, staging, snapshots, and marts | Pending |
+| 4 | Source change simulator (product price/cost, employee store transfer) | Complete |
+| 5 | dbt project, sources, staging, SCD2 models, and marts | Pending |
 | 6 | Dagster asset orchestration | Pending |
 | 7 | Preset dashboards | Pending |
 | 8 | Great Expectations extension | Optional / deferred |
@@ -416,7 +465,7 @@ Existing implementation locations:
 - `src/retail_pulse/oltp/models.py`: ORM schema;
 - `src/retail_pulse/generator/common.py`: shared random source and money rounding;
 - `src/retail_pulse/generator/seed.py`: historical seed generation;
-- `src/retail_pulse/generator/stream.py`: product change simulator;
+- `src/retail_pulse/generator/stream.py`: product and employee change simulator;
 - `src/retail_pulse/ingestion/pipelines.py`: dlt source and pipeline;
 - `src/retail_pulse/ingestion/clean.py`: dlt/Snowflake cleanup operations;
 - `tests/`: pytest suites; `conftest.py` provisions a disposable PostgreSQL test database;
@@ -440,7 +489,7 @@ A feature is done when:
 - the feature can be demonstrated and explained as part of the end-to-end portfolio narrative.
 
 The complete project is done when a user can seed PostgreSQL, create product changes, incrementally
-load Snowflake, build dbt snapshots and marts, inspect the pipeline in Dagster, and explore the
+load Snowflake, build dbt models and marts, inspect the pipeline in Dagster, and explore the
 resulting analytics in Preset.
 
 ## 17. Decision Log
@@ -452,8 +501,11 @@ resulting analytics in Preset.
 | Transaction-item grain for `fact_sales` | Final | Supports granular POS analysis |
 | Product and employee as SCD Type 2 | Final | Their changes affect historical interpretation |
 | Other dimensions static or Type 1 | Final | Additional history is not justified by current scope |
-| dbt snapshots own SCD history | Final | Separates source behavior from warehouse history management |
-| `stream.py` changes products only | Final for current phase | Focuses the demo on meaningful cost history |
+| dbt models over append-only RAW rows own SCD history; no `dbt snapshot` | Final | RAW already holds every version; window functions are idempotent and rebuildable |
+| RAW is the only history store | Final | Full refresh or replace of `product`/`employee` RAW tables loses SCD2 history |
+| Staging deduplicates cursor-boundary rows | Final | Incremental cursor can reload rows at the boundary |
+| `stream.py` changes product cost/price and employee store assignment only | Final | Produces the source changes that history in dbt will be built from |
+| Analytics consider `completed` transactions only | Final | Return/cancellation analysis is out of scope |
 | Inventory and customer domains excluded | Final | Prevents unnecessary project expansion |
 | Incremental ingestion before CDC | Final | Delivers a coherent end-to-end path before advanced expansion |
 
