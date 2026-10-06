@@ -7,6 +7,10 @@ In this challenge, our goal is to maximize enterprise profitability by optimizin
 
 ![Sample cash register receipt](./assets/diagrams/Sample_cash_register_receipt.png)
 
+> **Documentation:** phase-by-phase roadmap, run guides and component design notes live in
+> [docs/README.md](./docs/README.md). The canonical specification is
+> [docs/Project-Spec.md](./docs/Project-Spec.md).
+
 # 1. Operational Data Modeling
 ## a. Conceptual Model
 First step, consisting of the conceptual modeling phase, allows us to conceptualize and define the overall structure and relationships within the database. This involves identifying the key entities, their attributes, and their associations. Through careful analysis and collaboration with stakeholders, we will capture the essence of the management system and translate it into a concise and comprehensive conceptual model (Figure 1).   In the conceptual model in Figure 1, we can observe four entities: Store, Employee, Product, and Promotion, connected through two key events: Buy and Stocks. The primary event, Buy, enables us to track sales transactions at retail stores through cashiers while applying active promotions. (Keep in mind, capturing detailed POS transaction attributes such as Date, Payment method, Quantity, Regular price, and Coupon amount is essential for pricing and promotion analytics.) The second event, Stocks, is designed as a periodic snapshot event to track inventory levels (Quantity on hand) across stores over time (Snapshot date). Note that while the Stocks event is included in this conceptual model to accommodate broader supply chain design, it is currently out of scope and not utilized in this specific analytics case. For each entity and event, we have defined specific attributes to build a comprehensive operational database. Look Figure 1 below.
