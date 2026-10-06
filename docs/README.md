@@ -21,7 +21,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 2 | Seed dữ liệu lịch sử (`seed.py`) | Xong | [phases/02-historical-seed.md](phases/02-historical-seed.md) |
 | 3 | dlt ingestion full + incremental sang Snowflake RAW | Xong | [phases/03-ingestion-snowflake.md](phases/03-ingestion-snowflake.md) |
 | 4 | Mô phỏng thay đổi giá sản phẩm (`stream.py`) | Xong | [phases/04-product-change-simulator.md](phases/04-product-change-simulator.md) |
-| 5 | dbt: sources, staging, snapshots, marts | Chưa làm | — |
+| 5 | dbt: sources, staging, SCD2, marts | Chưa làm | — |
 | 6 | Dagster orchestration | Chưa làm | — |
 | 7 | Preset dashboards | Chưa làm | — |
 | 8 | Great Expectations | Tùy chọn | — |
@@ -31,6 +31,8 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | Thành phần | Tài liệu | Code | Test |
 |---|---|---|---|
 | Data generator (seed + stream) | [design/data-generator.md](design/data-generator.md) | `src/retail_pulse/generator/` | `tests/test_seed.py`, `tests/test_stream.py` |
+| Operational data modeling (OLTP: conceptual, logical, physical) | [design/operational-data-modeling.md](design/operational-data-modeling.md) | `infras/postgres/init/01_schema.sql`, `src/retail_pulse/oltp/` | — |
+| Analytical data modeling (Kimball: process, grain, dimension, fact) | [design/analytical-data-modeling.md](design/analytical-data-modeling.md) | dbt (phase 5) | — |
 
 ## Quick start
 
@@ -39,7 +41,7 @@ make install     # cài dependency (uv sync)
 make up          # bật PostgreSQL
 make seed        # nạp ~100k giao dịch lịch sử
 make stream      # đổi giá vài sản phẩm
-make ingest-full # load toàn bộ sang Snowflake RAW (cần cấu hình phase 3)
+make ingest      # load sang Snowflake RAW, lần đầu load hết, sau đó incremental (cần cấu hình phase 3)
 make test        # chạy toàn bộ test
 make help        # liệt kê mọi lệnh
 ```

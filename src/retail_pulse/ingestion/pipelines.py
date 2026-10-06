@@ -9,8 +9,9 @@ from dlt.sources.sql_database import sql_database
 import dlt
 from retail_pulse.oltp.db import engine
 
-# Bảng có updated_at thay đổi -> incremental + merge theo khóa chính
-INCREMENTAL: dict[str, list[str]] = {
+# Bảng có updated_at -> incremental append (không merge, rẻ hơn trên Snowflake).
+# Mỗi lần một dòng đổi là một dòng mới trong RAW; dbt dựng SCD2 từ các dòng đó.
+APPEND: dict[str, list[str]] = {
     "sales_transaction": ["transaction_id"],
     "sales_transaction_item": ["transaction_id", "line_number"],
     "product": ["id"],  # nguồn cho dim_product SCD2
@@ -31,14 +32,14 @@ def retail_source():
     source = sql_database(
         credentials=engine,  # dùng lại engine của oltp/db.py
         schema="retail",
-        table_names=[*INCREMENTAL, *FULL_REFRESH],
+        table_names=[*APPEND, *FULL_REFRESH],
         backend="sqlalchemy",
         reflection_level="full",  # giữ đúng precision/scale của NUMERIC(12,2)
     )
-    for table, pk in INCREMENTAL.items():
+    for table, pk in APPEND.items():
         source.resources[table].apply_hints(
-            primary_key=pk,
-            write_disposition="merge",
+            primary_key=pk,  # chỉ để dlt bỏ dòng trùng ở mốc con trỏ, không merge
+            write_disposition="append",
             incremental=dlt.sources.incremental("updated_at"),
         )
     for table in FULL_REFRESH:
@@ -47,11 +48,7 @@ def retail_source():
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Load Postgres OLTP vào Snowflake RAW")
-    parser.add_argument(
-        "--full-refresh", action="store_true", help="Xóa bảng và state incremental, load lại từ đầu"
-    )
-    args = parser.parse_args()
+    argparse.ArgumentParser(description="Load Postgres OLTP vào Snowflake RAW").parse_args()
 
     pipeline = dlt.pipeline(
         pipeline_name="retail_oltp_to_snowflake",
@@ -59,7 +56,7 @@ def main() -> None:
         dataset_name="raw",
         progress="log",
     )
-    info = pipeline.run(retail_source(), refresh="drop_sources" if args.full_refresh else None)
+    info = pipeline.run(retail_source())
     print(info)
     print(pipeline.last_trace.last_normalize_info)  # số dòng theo từng bảng
 

@@ -26,6 +26,7 @@ seed = "retail_pulse.generator.seed:main"
 stream = "retail_pulse.generator.stream:main"
 ingest = "retail_pulse.ingestion.pipelines:main"
 clean-ingest = "retail_pulse.ingestion.clean:main"
+snowflake-init = "retail_pulse.ingestion.snowflake_init:main"
 
 [build-system]
 requires = ["hatchling"]

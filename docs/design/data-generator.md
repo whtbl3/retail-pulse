@@ -340,13 +340,13 @@ Khi ranh giới này rõ, mỗi bước đều test được độc lập.
 `stream.py` **không làm SCD2**. Nó chỉ `UPDATE` bảng `product` ở PostgreSQL nguồn: đổi `unit_cost` là chính, thỉnh thoảng mới đổi `unit_price`. Việc lưu lịch sử thuộc về hai thành phần khác:
 
 - `dlt` mang dữ liệu đã đổi sang Snowflake (incremental theo `updated_at`)
-- `dbt snapshot` ghi nhận các phiên bản cũ và mới (SCD2)
+- dbt dựng các phiên bản cũ và mới (SCD2) từ các dòng append trong RAW
 
 ```mermaid
 flowchart LR
     S[stream.py] -->|UPDATE product| PG[(PostgreSQL)]
     PG -->|dlt incremental| RAW[(Snowflake RAW)]
-    RAW -->|dbt snapshot| DIM[dim_product SCD2]
+    RAW -->|dbt| DIM[dim_product SCD2]
 ```
 
 Vì `updated_at` đã được database tự cập nhật, code Python **không cần tự set** cột này. Một `UPDATE` thuần SQL cũng đủ để dlt nhìn thấy dòng thay đổi.
@@ -388,15 +388,14 @@ class StreamConfig:
     price_change_probability: float = 0.10   # xác suất đổi thêm unit_price khi một product được chọn
     price_change_pct_min: float = 0.01
     price_change_pct_max: float = 0.08
-    min_hours_between_changes: int = 24      # cooldown cho mỗi product
+    employees_per_tick: int = 1              # số employee chuyển cửa hàng mỗi cycle, 0 = tắt
     interval_seconds: int = 30               # chỉ dùng khi chạy loop
     random_seed: int | None = None
 ```
 
-Hai tham số đáng chú ý:
+Tham số đáng chú ý:
 
 - `price_change_probability` thể hiện đúng yêu cầu "ưu tiên đổi cost, hiếm khi đổi price". Mọi product được chọn đều đổi `unit_cost`, nhưng chỉ khoảng 10% trong số đó đổi thêm `unit_price`.
-- `min_hours_between_changes` là cooldown. Lý do kỹ thuật nằm ở phần "Lưu ý về SCD2" bên dưới.
 
 ## 2. `ProductRecord`
 
@@ -456,7 +455,7 @@ Các luật nên có:
 | Luật | Mục đích |
 |---|---|
 | Chọn tối đa `max_products_per_tick` product mỗi lần | Giữ khối lượng thay đổi nhỏ |
-| Loại product vừa đổi trong `min_hours_between_changes` giờ | Tránh đổi dồn dập trên cùng một product |
+| Chọn `employees_per_tick` employee đang làm việc, chuyển sang cửa hàng khác | Có thay đổi `store_id` để dựng lịch sử cho employee |
 | `unit_cost` đổi trong khoảng `cost_change_pct_min..max` (tăng hoặc giảm) | Biến động thực tế, không đột ngột |
 | `unit_price` chỉ đổi với xác suất `price_change_probability` | Giá bán ít đổi hơn giá vốn |
 | Ràng buộc `new_unit_price >= new_unit_cost` | Không tạo ra margin âm vô lý |
@@ -506,7 +505,7 @@ class StreamApplyResult:
 Điểm kỹ thuật khi viết `apply_product_changes`:
 
 - Toàn bộ events của một tick nằm trong **một transaction DB**. Hoặc thành công hết, hoặc rollback hết.
-- Chỉ `UPDATE` hai cột `unit_cost` và `unit_price`. **Không set `updated_at`** vì database đã lo.
+- Chỉ `UPDATE` `unit_cost`, `unit_price` của product và `store_id` của employee. **Không set `updated_at`** vì database đã lo.
 - Nếu muốn an toàn khi có nhiều tiến trình cùng chạy, thêm điều kiện `WHERE product_id = :id AND unit_cost = :old_unit_cost` (optimistic check). Với scope hiện tại một tiến trình thì chưa cần.
 - Nếu `events` rỗng thì trả về `StreamApplyResult(0)` mà không mở transaction.
 
@@ -569,13 +568,9 @@ Chưa cần các lớp như `PriceCalculator`, `RandomSelector`, `EventPublisher
 
 ## Lưu ý về SCD2 khi thiết kế tần suất thay đổi
 
-`dbt snapshot` chỉ nhìn thấy dữ liệu **tại thời điểm snapshot chạy**. Nếu một product bị `stream.py` đổi giá 3 lần giữa hai lần ingest, snapshot chỉ ghi nhận trạng thái cuối, hai trạng thái trung gian bị mất.
+Ingest incremental theo `updated_at` chỉ thấy **trạng thái của dòng tại lúc ingest chạy**. Nếu một product bị `stream.py` đổi giá 3 lần giữa hai lần ingest, hai trạng thái trung gian bị mất.
 
-Với mục tiêu demo SCD2 cho `dim_product`, hệ quả thiết kế là:
-
-- Dùng `min_hours_between_changes` để mỗi product đổi **tối đa một lần giữa hai chu kỳ ingest + snapshot**.
-- Chọn `interval_seconds` và lịch chạy ingest sao cho mỗi product có thời gian "đứng yên" đủ lâu.
-- Đây cũng là điểm khác biệt đáng nhắc khi so sánh snapshot theo batch với CDC thật (CDC bắt được mọi thay đổi trung gian), và là chủ đề hay cho phase 2.
+Hệ quả thiết kế: **mỗi cycle `stream.py` phải được ingest trước khi chạy cycle kế tiếp**. Không có cooldown trong code; kỷ luật này nằm ở cách chạy (và sau này ở Dagster, chạy ingest ngay sau stream). Đây cũng là điểm khác với CDC thật, vốn bắt được mọi thay đổi trung gian.
 
 ---
 
@@ -633,7 +628,7 @@ Postgres chưa bật thì các test cần DB bị skip, unit test vẫn chạy.
 | File | Không cần DB | Cần DB |
 |---|---|---|
 | `tests/test_seed.py` | dataset tái lập được; hình dạng dataset; `build_seed_context` map key → ID; chia batch và tái lập; validate tham số | số dòng danh mục; số giao dịch gần mục tiêu; `product_name` khớp brand; nhân viên đúng cửa hàng và đang làm việc; line_number liên tục; `regular_price` = giá lúc bán; promotion còn hiệu lực; không có FK mồ côi; ngày bán nằm trong `start..end`, giờ 7h–21h; từ chối DB có dữ liệu, `--reset` cho lại đúng dữ liệu cũ |
-| `tests/test_stream.py` | tái lập theo seed; số product chọn bị chặn bởi số có sẵn; cooldown; biên độ và làm tròn; xác suất đổi giá bán; không margin âm; validate tham số | một cycle chỉ đổi đúng N product, giữ nguyên SKU/tên/brand/category, trigger cập nhật `updated_at`, không bảng nào khác đổi; rollback cả tick khi lỗi; chạy N cycle với `time.sleep` bị mock; DB trống báo lỗi rõ |
+| `tests/test_stream.py` | tái lập theo seed; số product chọn bị chặn bởi số có sẵn; biên độ và làm tròn; xác suất đổi giá bán; không margin âm; validate tham số | một cycle chỉ đổi đúng N product, giữ nguyên SKU/tên/brand/category, trigger cập nhật `updated_at`, không bảng nào khác ngoài `product`/`employee` đổi; employee chuyển sang cửa hàng khác; rollback cả tick khi lỗi; chạy N cycle với `time.sleep` bị mock; DB trống báo lỗi rõ |
 
 Không có test cho khách hàng, đơn hàng mới hay trạng thái `pending` trong stream: theo spec, domain
 customer bị loại khỏi scope, `stream.py` chỉ đổi product, và trạng thái hợp lệ chỉ là
