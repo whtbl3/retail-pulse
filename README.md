@@ -190,3 +190,24 @@ flowchart LR
   class BI bi
   class DAG,CI ops
 ```
+
+## C. Tool Architecture
+
+The same pipeline seen as the tools that implement it. Data moves left to right through the middle row (generator → PostgreSQL → dlt → Snowflake RAW → dbt), dbt builds the Snowflake layers on the bottom row, and Dagster and GitHub CI sit above as the control plane.
+
+![RetailPulse tool architecture](./assets/diagrams/RetailPulse_Tool_Architecture.png)
+
+| Tool | Role | Status |
+| --- | --- | --- |
+| Python generator (SQLAlchemy, Faker) | Seeds historical data and simulates product price/cost changes | Done |
+| PostgreSQL 16 (Docker Compose) | Source OLTP database, 3NF | Done |
+| dlt | Incremental ingestion from PostgreSQL to Snowflake RAW | Done |
+| Snowflake | RAW, staging, intermediate and marts layers | RAW done |
+| dbt Core | Staging, intermediate, marts, SCD2 snapshots, tests | Planned |
+| Dagster | Orchestrates dlt and dbt as assets | Planned |
+| Preset | BI dashboards on the marts | Planned |
+| GitHub CI | Lint, test, deploy | Planned |
+| Great Expectations | Optional data quality checks on RAW | Deferred |
+
+See [docs/README.md](./docs/README.md) for the phase-by-phase roadmap.
+
