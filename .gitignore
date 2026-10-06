@@ -18,8 +18,5 @@ wheels/
 *.pem.dlt/secrets.toml
 .snowflake
 .ruff_cache
-.agents
-.claude
-.archify
-SKILL.md
-skills-lock.json
+.pytest_cach
+.cache

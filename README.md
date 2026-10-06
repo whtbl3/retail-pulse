@@ -195,7 +195,7 @@ flowchart LR
 
 The same pipeline seen as the tools that implement it. Data moves left to right through the middle row (generator → PostgreSQL → dlt → Snowflake RAW → dbt), dbt builds the Snowflake layers on the bottom row, and Dagster and GitHub CI sit above as the control plane.
 
-![RetailPulse tool architecture](./assets/diagrams/RetailPulse_Tool_Architecture.png)
+![RetailPulse tool architecture](./assets/diagrams/retailpulse-tool.png)
 
 | Tool | Role | Status |
 | --- | --- | --- |
