@@ -55,6 +55,7 @@ code_location_name = "retail_pulse"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
