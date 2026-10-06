@@ -1,31 +1,29 @@
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
 
-from retail_pulse.generator.common import TZ, RandomSource
+from retail_pulse.generator.common import RandomSource
 from retail_pulse.generator.seed import SeedConfig, SeedCoordinator
 from retail_pulse.generator.stream import (
     REASON_COST,
     REASON_PRICE,
+    ChangePolicy,
+    EmployeeRecord,
     NoProductsError,
-    ProductChangePolicy,
     ProductRecord,
-    ProductRepository,
+    SourceRepository,
     StreamConfig,
     StreamRunner,
     parse_args,
     shift_by_pct,
 )
 
-NOW = datetime(2026, 1, 1, 12, tzinfo=TZ)
-LONG_AGO = NOW - timedelta(days=30)
 
-
-def make_products(n: int = 50, updated_at: datetime = LONG_AGO) -> list[ProductRecord]:
+def make_products(n: int = 50) -> list[ProductRecord]:
     return [
         ProductRecord(
             product_id=i,
@@ -33,14 +31,13 @@ def make_products(n: int = 50, updated_at: datetime = LONG_AGO) -> list[ProductR
             product_name=f"Product {i}",
             unit_cost=Decimal(7_000 + 1_300 * i),
             unit_price=Decimal(10_000 + 2_000 * i),
-            updated_at=updated_at,
         )
         for i in range(1, n + 1)
     ]
 
 
 def plan(config: StreamConfig, products: list[ProductRecord], seed: int = 1):
-    return ProductChangePolicy(RandomSource(seed)).plan_changes(products, config, now=NOW)
+    return ChangePolicy(RandomSource(seed)).plan_changes(products, config)
 
 
 def test_same_seed_gives_same_events():
@@ -58,16 +55,19 @@ def test_selects_distinct_products_capped_by_available():
     assert sorted(e.product_id for e in events) == [1, 2, 3]
 
 
-def test_cooldown_skips_recently_changed_products():
-    recent = make_products(5, updated_at=NOW - timedelta(hours=1))
-    old = make_products(8)[5:]
-    events = plan(
-        StreamConfig(max_products_per_tick=10, min_hours_between_changes=24), recent + old
-    )
-    assert sorted(e.product_id for e in events) == [6, 7, 8]
+def test_transfers_move_to_a_different_store():
+    employees = [EmployeeRecord(i, store_id=1 + i % 3) for i in range(1, 21)]
+    policy = ChangePolicy(RandomSource(1))
+    transfers = policy.plan_transfers(employees, [1, 2, 3], StreamConfig(employees_per_tick=5))
+    assert len({t.employee_id for t in transfers}) == 5
+    assert all(t.new_store_id != t.old_store_id for t in transfers)
 
-    events = plan(StreamConfig(max_products_per_tick=10, min_hours_between_changes=0), recent)
-    assert len(events) == 5
+
+def test_transfers_skipped_with_single_store_or_disabled():
+    employees = [EmployeeRecord(1, 1)]
+    policy = ChangePolicy(RandomSource(1))
+    assert policy.plan_transfers(employees, [1], StreamConfig()) == []
+    assert policy.plan_transfers(employees, [1, 2], StreamConfig(employees_per_tick=0)) == []
 
 
 def test_cost_changes_within_bounds_and_is_rounded():
@@ -98,8 +98,7 @@ def test_price_changes_only_by_probability():
 def test_never_negative_margin_or_negative_values():
     # Margin rất mỏng: cost sát price, biên độ lớn
     products = [
-        ProductRecord(i, f"SKU-{i}", "p", Decimal(9_900), Decimal(10_000), LONG_AGO)
-        for i in range(1, 51)
+        ProductRecord(i, f"SKU-{i}", "p", Decimal(9_900), Decimal(10_000)) for i in range(1, 51)
     ]
     cfg = StreamConfig(
         max_products_per_tick=50,
@@ -127,7 +126,7 @@ def test_shift_by_pct_moves_at_least_one_step():
         {"cost_change_pct_min": 0.1, "cost_change_pct_max": 0.05},
         {"price_change_pct_max": 1.5},
         {"price_change_probability": 1.1},
-        {"min_hours_between_changes": -1},
+        {"employees_per_tick": -1},
         {"interval_seconds": 0},
     ],
 )
@@ -210,7 +209,7 @@ def test_run_once_updates_only_selected_products(seeded, session_factory):
     before = products_by_id(session_factory)
     others_before = other_tables_state(session_factory)
 
-    tick = make_runner(session_factory, max_products_per_tick=5).run_once()
+    tick = make_runner(session_factory, max_products_per_tick=5, employees_per_tick=0).run_once()
 
     after = products_by_id(session_factory)
     changed = [pid for pid in before if before[pid] != after[pid]]
@@ -226,14 +225,14 @@ def test_run_once_updates_only_selected_products(seeded, session_factory):
 
 
 def test_same_seed_and_data_give_same_changes(seeded, session_factory):
-    products = ProductRepository(session_factory).list_active_products()
+    products = SourceRepository(session_factory).list_active_products()
     first = make_runner(session_factory).policy.plan_changes(products, StreamConfig())
     second = make_runner(session_factory).policy.plan_changes(products, StreamConfig())
     assert first == second
 
 
 def test_failed_cycle_rolls_back_everything(seeded, session_factory):
-    repo = ProductRepository(session_factory)
+    repo = SourceRepository(session_factory)
     before = products_by_id(session_factory)
     runner = make_runner(session_factory, max_products_per_tick=2)
     events = runner.policy.plan_changes(repo.list_active_products(), runner.config)
@@ -241,7 +240,7 @@ def test_failed_cycle_rolls_back_everything(seeded, session_factory):
     events[1] = replace(events[1], old_unit_cost=events[1].old_unit_cost + 1)
 
     with pytest.raises(RuntimeError):
-        repo.apply_product_changes(events)
+        repo.apply_changes(events, [])
     assert products_by_id(session_factory) == before
 
 
@@ -260,10 +259,24 @@ def test_run_forever_n_cycles_without_waiting(seeded, session_factory):
     sleep.assert_called_with(30)
     after = products_by_id(session_factory)
     changed = [pid for pid in before if before[pid] != after[pid]]
-    # Cooldown 24h: mỗi product đổi tối đa 1 lần, nên N cycle đổi N x 3 product khác nhau
-    assert len(changed) == n_cycles * 3
+    assert 3 <= len(changed) <= n_cycles * 3
 
 
 def test_run_once_on_empty_database_raises(session_factory):
     with pytest.raises(NoProductsError):
         make_runner(session_factory).run_once()
+
+
+def test_run_once_transfers_employees_to_another_store(seeded, session_factory):
+    def employees():
+        with session_factory() as session:
+            rows = session.execute(text("SELECT id, store_id, updated_at FROM retail.employee"))
+            return {r[0]: tuple(r) for r in rows}
+
+    before = employees()
+    tick = make_runner(session_factory, employees_per_tick=2).run_once()
+
+    after = employees()
+    moved = [i for i in before if before[i][1] != after[i][1]]
+    assert tick.transferred_employees == len(moved) == 2
+    assert all(after[i][2] > before[i][2] for i in moved)  # trigger cập nhật updated_at
