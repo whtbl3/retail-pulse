@@ -4,7 +4,7 @@ DAYS ?= 365
 ROWS ?= 100000
 DLT_PIPELINE ?= retail_oltp_to_snowflake
 
-.PHONY: help install up down db-reset psql seed reseed lint
+.PHONY: help install up down db-reset psql seed reseed stream stream-loop test lint
 
 help: ## Liệt kê các lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -33,7 +33,16 @@ seed: up ## Seed dữ liệu lịch sử (DAYS=365)
 
 reseed: up ## Xóa dữ liệu cũ rồi seed lại
 	uv run seed --days $(DAYS) --transactions $(ROWS) --reset
+
+stream: up ## Đổi giá vốn/giá bán của vài product (1 cycle)
+	uv run stream
+
+stream-loop: up ## Chạy stream liên tục đến khi Ctrl+C
+	uv run stream --loop
 	
+test: up ## Chạy pytest (tạo DB tạm <PG_DB>_test, xóa sau khi xong)
+	uv run pytest
+
 lint: ## Ruff
 	uv run ruff check --fix src && uv run ruff format src
 
