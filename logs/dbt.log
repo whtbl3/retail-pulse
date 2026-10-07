@@ -214,3 +214,19 @@ Runtime Error
 [0m11:16:43.820903 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x78d6cc457e00>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x78d6cc457fe0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x78d6cc457c50>]}
 [0m11:16:43.821190 [debug] [MainThread]: Flushing usage events
 [0m11:16:45.069506 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m14:56:29.911412 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7de477a307a0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7de477a328d0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7de477a32a20>]}
+
+
+============================== 14:56:29.917745 | 2d6fc157-8438-46b0-af5f-75e13d9a2026 ==============================
+[0m14:56:29.917745 [info ] [MainThread]: Running with dbt=1.12.5
+[0m14:56:29.918242 [debug] [MainThread]: running dbt with arguments {'debug': 'False', 'log_path': 'logs', 'hints_enabled': 'True', 'target_path': 'None', 'cache_selected_only': 'False', 'invocation_command': 'dbt test', 'warn_error': 'None', 'introspect': 'True', 'partial_parse': 'True', 'log_format': 'default', 'use_experimental_parser': 'False', 'write_json': 'True', 'maximum_seed_size_mib': '1', 'send_anonymous_usage_stats': 'True', 'quiet': 'False', 'printer_width': '80', 'indirect_selection': 'eager', 'fail_fast': 'False', 'profiles_dir': '/home/phuclh/.dbt', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'no_print': 'None', 'log_cache_events': 'False', 'version_check': 'True', 'use_colors': 'True', 'static_parser': 'True', 'empty': 'None'}
+[0m14:56:29.918640 [error] [MainThread]: [[31mERROR[0m]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /home/phuclh/retail-pulse/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m14:56:29.919280 [debug] [MainThread]: Resource report: {"command_name": "test", "command_success": false, "command_wall_clock_time": 0.0911834, "process_in_blocks": "0", "process_kernel_time": 0.743824, "process_mem_max_rss": "109024", "process_out_blocks": "0", "process_user_time": 1.407668}
+[0m14:56:29.919630 [debug] [MainThread]: Command `dbt test` failed at 14:56:29.919559 after 0.09 seconds
+[0m14:56:29.919959 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7de4779fb110>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7de477a314f0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x7de477a321e0>]}
+[0m14:56:29.920233 [debug] [MainThread]: Flushing usage events
+[0m14:56:31.121786 [debug] [MainThread]: An error was encountered while trying to flush usage events

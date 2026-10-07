@@ -15,9 +15,17 @@ wheels/
 .dlt
 .dlt/secrets.toml
 *.p8
-*.pem.dlt/secrets.toml
+*.pem
 .snowflake
 .ruff_cache
-.pytest_cach
+.pytest_cache
 .cache
 .claude/settings.local.json
+
+logs/
+
+# dbt
+profiles.yml
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
