@@ -4,14 +4,14 @@ The analytical (Kimball) model for the warehouse, built from the source describe
 [operational-data-modeling.md](operational-data-modeling.md). It is designed step by step, and each
 step is approved before the next one starts.
 
-| Step | Content | Status |
-|---|---|---|
-| 1 | Identify the business process | Approved |
-| 2 | Clarify the grain | Approved |
-| 3 | Identify the dimensions | Approved |
-| 4 | Identify the facts | Approved |
-| 5 | Choose the dimension types (Type 0/1/2...) | Approved |
-| 6 | Choose the fact table type (transaction / periodic snapshot / accumulating) | Approved |
+| Step | Content |
+|---|---|
+| 1 | Identify the business process |
+| 2 | Clarify the grain |
+| 3 | Identify the dimensions |
+| 4 | Identify the facts |
+| 5 | Choose the dimension types (Type 0/1/2...) |
+| 6 | Choose the fact table type (transaction / periodic snapshot / accumulating) |
 
 ## Step 1. Business process
 
@@ -129,6 +129,18 @@ example `SUM(gross_profit) / SUM(net_amount)`, so nobody averages ratios by acci
 | `net_amount` | `gross_amount − discount_amount − coupon_amount` | yes |
 | `cost_amount` | `quantity × unit_cost` | yes |
 | `gross_profit` | `net_amount − cost_amount` | yes |
+
+### Additivity of the measures
+
+| Class | Meaning | Measures in `fact_sales` |
+|---|---|---|
+| **Additive** | can be summed across every dimension, including time | `quantity`, `gross_amount`, `discount_amount`, `coupon_amount`, `net_amount`, `cost_amount`, `gross_profit` |
+| **Semi-additive** | can be summed across every dimension except time (for example an inventory balance or an account balance: summing stores is valid, summing days is not) | none |
+| **Non-additive** | cannot be summed across any dimension | `regular_price`, `unit_cost` (unit prices); ratios such as gross margin and average invoice value are also non-additive but are metrics in Preset, not fact columns |
+
+There are no semi-additive measures on purpose: they appear almost only in periodic snapshot facts,
+and this model has none (inventory is out of scope, see step 6). `fact_sales` is a transaction fact,
+so every money and quantity measure is fully additive.
 
 ### Promotion and coupon conventions
 
