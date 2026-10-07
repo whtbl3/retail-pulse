@@ -23,22 +23,25 @@ Code: `src/retail_pulse/ingestion/pipelines.py`, `src/retail_pulse/ingestion/cle
 ## 1. Tạo key pair cho user dlt
 
 ```bash
-mkdir -p snowflake
-openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out snowflake/dlt_loader.p8 -nocrypt
-openssl rsa -in snowflake/dlt_loader.p8 -pubout -out snowflake/dlt_loader.pub
-grep -v -- '-----' snowflake/dlt_loader.pub | tr -d '\n'; echo # Lưu mã vừa rồi
+mkdir -p .snowflake
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out .snowflake/dlt_loader.p8 -nocrypt
+openssl rsa -in .snowflake/dlt_loader.p8 -pubout -out .snowflake/dlt_loader.pub
 ```
 
 ## 2. Tạo warehouse, database, role, user trên Snowflake
 
 Toàn bộ nằm ở `infras/snowflake/init.sql` (resource monitor, warehouse `RETAIL_WH` XSMALL
 auto-suspend 60 giây, database `RETAIL_PULSE`, schema `RAW`, role `LOADER` và `TRANSFORMER`, user
-`DLT_LOADER` xác thực bằng key pair). File viết để chạy lại nhiều lần không lỗi.
+`DLT_LOADER` cho dlt và `DBT_TRANSFORMER` cho dbt, đều xác thực bằng key pair). File viết để chạy lại nhiều lần không lỗi.
 
 ```bash
-make snowflake-init-dry   # in 22 câu lệnh, không kết nối Snowflake
-export SNOWFLAKE_ACCOUNT=...  SNOWFLAKE_ADMIN_USER=...  SNOWFLAKE_ADMIN_PASSWORD=...
-make snowflake-init       # chạy thật bằng ACCOUNTADMIN, public key lấy từ snowflake/dlt_loader.pub
+make snowflake-init-dry   # in 25 câu lệnh, không kết nối Snowflake
+# Chưa có key trong .snowflake/ thì snowflake-init tự tạo cặp mới (hoặc suy .pub từ .p8 có sẵn).
+# Private key của dlt đặt trong .dlt/secrets.toml; của dbt là .snowflake/dbt_transformer.p8.
+# Đặt SNOWFLAKE_ADMIN_USER và SNOWFLAKE_ADMIN_PASSWORD (tài khoản ACCOUNTADMIN) trong .env hoặc export.
+# SNOWFLAKE_ACCOUNT không đặt thì lấy từ host trong .dlt/secrets.toml.
+export SNOWFLAKE_ADMIN_USER=...  SNOWFLAKE_ADMIN_PASSWORD=...
+make snowflake-init       # chạy thật bằng ACCOUNTADMIN, public key lấy từ .snowflake/dlt_loader.pub
 ```
 
 Kiểm tra: chạy `DESC USER DLT_LOADER;` trên Snowflake, nếu cột `RSA_PUBLIC_KEY_FP` có giá trị

@@ -1,7 +1,7 @@
 -- Khởi tạo Snowflake cho RetailPulse. Chạy bằng ACCOUNTADMIN qua `make snowflake-init`
 -- (xem trước bằng `make snowflake-init-dry`). Viết để chạy lại nhiều lần không lỗi.
 -- Mỗi câu lệnh kết thúc bằng dấu chấm phẩy; chỉ dùng chú thích cả dòng.
--- __RSA_PUBLIC_KEY__ được thay bằng public key của user DLT_LOADER.
+-- __DLT_LOADER_PUBLIC_KEY__ và __DBT_TRANSFORMER_PUBLIC_KEY__ được thay bằng public key của từng user.
 
 USE ROLE ACCOUNTADMIN;
 
@@ -43,5 +43,13 @@ CREATE USER IF NOT EXISTS DLT_LOADER
   TYPE = SERVICE
   DEFAULT_ROLE = LOADER
   DEFAULT_WAREHOUSE = RETAIL_WH;
-ALTER USER DLT_LOADER SET RSA_PUBLIC_KEY = '__RSA_PUBLIC_KEY__';
+ALTER USER DLT_LOADER SET RSA_PUBLIC_KEY = '__DLT_LOADER_PUBLIC_KEY__';
 GRANT ROLE LOADER TO USER DLT_LOADER;
+
+-- User cho dbt (xác thực bằng key pair riêng, role TRANSFORMER)
+CREATE USER IF NOT EXISTS DBT_TRANSFORMER
+  TYPE = SERVICE
+  DEFAULT_ROLE = TRANSFORMER
+  DEFAULT_WAREHOUSE = RETAIL_WH;
+ALTER USER DBT_TRANSFORMER SET RSA_PUBLIC_KEY = '__DBT_TRANSFORMER_PUBLIC_KEY__';
+GRANT ROLE TRANSFORMER TO USER DBT_TRANSFORMER;
