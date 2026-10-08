@@ -1,0 +1,79 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Dữ liệu OLTP do dlt nạp vào Snowflake. Append-only với các bảng incremental, nên có thể chứa nhiều phiên bản và dòng trùng ở biên cursor.
+    database: RETAIL_PULSE
+    schema: RAW
+    tables:
+      - name: store
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+      - name: category
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+      - name: brand
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+      - name: promotion
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+      - name: promotion_product
+        columns:
+          - name: product_id
+            data_tests:
+              - not_null
+          - name: promotion_id
+            data_tests:
+              - not_null
+      - name: payment_method
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+
+      # Append incremental: nhiều phiên bản cùng id, SCD2 dựng ở intermediate
+      # (không test unique vì id lặp lại qua các phiên bản)
+      - name: product
+        columns:
+          - name: id
+            data_tests:
+              - not_null
+      - name: employee
+        columns:
+          - name: id
+            data_tests:
+              - not_null
+
+      # Append incremental: nguồn của fct_sales
+      - name: sales_transaction
+        config:
+          loaded_at_field: created_at
+          freshness:
+            warn_after: {count: 1, period: day}
+            error_after: {count: 3, period: day}
+        columns:
+          - name: transaction_id
+            data_tests:
+              - not_null
+      - name: sales_transaction_item
+        columns:
+          - name: transaction_id
+            data_tests:
+              - not_null
+          - name: line_number
+            data_tests:
+              - not_null

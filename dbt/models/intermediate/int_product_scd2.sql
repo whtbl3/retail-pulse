@@ -1,0 +1,16 @@
+-- TODO(human): dựng SCD2 cho product từ stg_product. Bạn tự viết; chỉ tham khảo
+-- docs/design/analytical-data-modeling.md, mục "How versions are built from RAW", sau khi đã thử.
+--
+-- Đầu ra: mỗi dòng là MỘT PHIÊN BẢN của sản phẩm, với các cột
+--   product_id, (các cột Type 2), (các cột Type 1), valid_from, valid_to, is_current.
+--
+-- Cần nghĩ:
+--   1. Cột nào theo dõi lịch sử (Type 2), cột nào luôn lấy giá trị mới nhất (Type 1)?
+--      Đọc CLAUDE.md, mục "Quyết định kiến trúc".
+--   2. Làm sao biết một dòng có THỰC SỰ đổi so với dòng trước? Gợi ý: LAG so với IS DISTINCT FROM.
+--      Vì sao không dùng DISTINCT hay GROUP BY? Nghĩ giá A -> B -> A.
+--   3. valid_to của một phiên bản lấy từ đâu? Phiên bản cuối cùng thì sao (is_current)?
+--   4. Phiên bản đầu tiên của mỗi sản phẩm có valid_from đặc biệt, xem CLAUDE.md. Vì sao?
+--   5. Biên khoảng: valid_from <= transaction_ts < valid_to (nửa mở). Vì sao không dùng <= ở cả hai đầu?
+-- Hiện tại file chỉ select tạm để model chạy được.
+select * from {{ ref('stg_product') }}

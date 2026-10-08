@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: int_product_scd2
+    description: Các phiên bản SCD2 của sản phẩm, một dòng mỗi phiên bản. Theo dõi unit_cost, unit_price, category_id, brand_id; các cột khác lấy giá trị mới nhất (Type 1).
+    # TODO(human): thêm test. Gợi ý khóa của model này là gì? Còn khoảng valid_from/valid_to
+    # không chồng lấn và "đúng một phiên bản hiện hành" mỗi sản phẩm thì kiểm bằng cách nào?
+    # (Không có sẵn test generic; nghĩ tới singular test, tức một câu SELECT trả về các dòng SAI.)

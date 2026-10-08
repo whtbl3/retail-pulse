@@ -1,0 +1,170 @@
+version: 2
+
+models:
+  - name: stg_store
+    description: Danh sách cửa hàng, một dòng mỗi cửa hàng. RAW nạp kiểu replace nên không cần dedup.
+    columns:
+      - name: store_id
+        description: Khóa chính của cửa hàng (đổi tên từ id).
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_category
+    description: Danh mục sản phẩm, một dòng mỗi danh mục. RAW nạp kiểu replace nên không cần dedup.
+    columns:
+      - name: category_id
+        description: Khóa chính của danh mục (đổi tên từ id).
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_brand
+    description: Nhãn hàng, một dòng mỗi nhãn. RAW nạp kiểu replace nên không cần dedup.
+    columns:
+      - name: brand_id
+        description: Khóa chính của nhãn hàng (đổi tên từ id).
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_promotion
+    description: Chương trình khuyến mãi, một dòng mỗi chương trình. RAW nạp kiểu replace nên không cần dedup.
+    columns:
+      - name: promotion_id
+        description: Khóa chính của khuyến mãi (đổi tên từ id).
+        data_tests:
+          - unique
+          - not_null
+      - name: type
+        description: Loại giảm giá, percentage (theo phần trăm) hoặc fixed_amount (số tiền cố định trên mỗi đơn vị).
+        data_tests:
+          - accepted_values:
+              values: ['percentage', 'fixed_amount']
+
+  - name: stg_promotion_product
+    description: Bảng nối khuyến mãi với sản phẩm, một dòng mỗi cặp (promotion_id, product_id).
+    columns:
+      - name: product_id
+        description: Sản phẩm được áp dụng khuyến mãi.
+        data_tests:
+          - not_null
+      - name: promotion_id
+        description: Khuyến mãi áp dụng cho sản phẩm.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - promotion_id
+            - product_id
+
+  - name: stg_payment_method
+    description: Phương thức thanh toán, một dòng mỗi phương thức. RAW nạp kiểu replace nên không cần dedup.
+    columns:
+      - name: payment_method_id
+        description: Khóa chính của phương thức thanh toán (đổi tên từ id).
+        data_tests:
+          - unique
+          - not_null
+  
+  - name: stg_product
+    description: Mọi phiên bản của sản phẩm, một dòng mỗi (product_id, updated_at). Đã dedup bản sao ở biên cursor của dlt nhưng giữ nguyên lịch sử để dựng SCD2 ở tầng intermediate.
+    columns:
+      - name: product_id
+        description: Mã sản phẩm (đổi tên từ id). Lặp lại qua các phiên bản nên không unique một mình.
+        data_tests:
+          - not_null
+      - name: updated_at
+        description: Thời điểm phiên bản này có hiệu lực, dùng làm thứ tự phiên bản.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - product_id
+            - updated_at
+
+  - name: stg_employee
+    description: Mọi phiên bản của nhân viên, một dòng mỗi (employee_id, updated_at). Đã dedup bản sao ở biên cursor của dlt, giữ nguyên lịch sử để dựng SCD2. Không đưa salary vào vì dự án không dùng.
+    columns:
+      - name: employee_id
+        description: Mã nhân viên (đổi tên từ id). Lặp lại qua các phiên bản nên không unique một mình.
+        data_tests:
+          - not_null
+      - name: updated_at
+        description: Thời điểm phiên bản này có hiệu lực, dùng làm thứ tự phiên bản.
+        data_tests:
+          - not_null
+      - name: store_id
+        description: Cửa hàng nhân viên làm việc ở phiên bản này. Cột duy nhất được theo dõi lịch sử (SCD2).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - employee_id
+            - updated_at
+
+  - name: stg_sales_transaction
+    description: Giao dịch bán hàng, một dòng mỗi transaction_id. Đã dedup bản sao ở biên cursor của dlt. Chưa lọc theo status; việc chỉ giữ giao dịch completed làm ở tầng sau.
+    columns:
+      - name: transaction_id
+        description: Khóa chính của giao dịch.
+        data_tests:
+          - unique
+          - not_null
+      - name: store_id
+        description: Cửa hàng phát sinh giao dịch.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_store')
+              field: store_id
+      - name: employee_id
+        description: Nhân viên bán hàng.
+        data_tests:
+          - not_null
+      - name: payment_method_id
+        description: Phương thức thanh toán.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_payment_method')
+              field: payment_method_id
+      - name: status
+        description: Trạng thái giao dịch, một trong completed, cancelled, returned.
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['completed', 'cancelled', 'returned']
+
+  - name: stg_sales_transaction_item
+    description: Dòng chi tiết của giao dịch, một dòng mỗi (transaction_id, line_number). Đã dedup bản sao ở biên cursor của dlt.
+    columns:
+      - name: transaction_id
+        description: Giao dịch chứa dòng này.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sales_transaction')
+              field: transaction_id
+      - name: promotion_id
+        description: Khuyến mãi áp dụng cho dòng này; rỗng nếu không có khuyến mãi.
+        data_tests:
+          - relationships:
+              to: ref('stg_promotion')
+              field: promotion_id
+      - name: product_id
+        description: Sản phẩm được bán. Chưa có relationships vì stg_product có nhiều phiên bản mỗi product_id; kiểm tra fact trỏ tới dim làm ở tầng marts.
+        data_tests:
+          - not_null
+      - name: line_number
+        description: Số thứ tự dòng trong giao dịch.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - transaction_id
+            - line_number
