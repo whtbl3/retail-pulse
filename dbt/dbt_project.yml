@@ -28,9 +28,6 @@ models:
       +materialized: view
       +schema: staging
     intermediate:
-      # TODO(human): chọn +materialized cho tầng này (view / table / ephemeral) rồi ghi lý do.
-      # Cân nhắc: int_product_scd2 dùng window function trên toàn bộ lịch sử product,
-      # và fct_sales sẽ join vào nó. Chạy lại mỗi lần query có đắt không? (Có)
       +materialized: table
       +schema: intermediate
     marts:
