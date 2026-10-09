@@ -154,7 +154,7 @@ models:
         data_tests: [not_null]
 
   - name: dim_date
-    description: Dimension ngày, một dòng mỗi ngày từ date_start trong date_days ngày, cộng thành viên -2 "Unknown". Sinh từ vars, không đọc nguồn nào. Nhãn tháng/thứ bằng tiếng Việt.
+    description: Dimension ngày, một dòng mỗi ngày từ date_start trong date_days ngày, cộng thành viên -2 "Unknown". Sinh từ vars, không đọc nguồn nào. Nhãn tháng và thứ bằng tiếng Anh.
     columns:
       - name: date_key
         description: Khóa ngày dạng số YYYYMMDD (ví dụ 20250301); -2 cho Unknown.
@@ -172,13 +172,13 @@ models:
       - name: month
         description: Tháng trong năm (1-12).
       - name: month_name
-        description: Tên tháng, ví dụ "Tháng 3".
+        description: Tên tháng bằng tiếng Anh, ví dụ "March".
       - name: day_of_month
         description: Ngày trong tháng (1-31).
       - name: day_of_week
-        description: Thứ trong tuần theo ISO (1 = Thứ Hai ... 7 = Chủ Nhật).
+        description: Thứ trong tuần theo ISO (1 = Monday ... 7 = Sunday).
       - name: day_name
-        description: Tên thứ, ví dụ "Thứ Hai".
+        description: Tên thứ bằng tiếng Anh, ví dụ "Monday".
       - name: week_of_year
         description: Tuần ISO trong năm.
       - name: is_weekend
