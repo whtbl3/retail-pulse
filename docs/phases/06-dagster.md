@@ -8,8 +8,8 @@ khai còn TBD.
 
 | Bước | Nội dung | Trạng thái |
 |---|---|---|
-| 1 | Asset dlt: mỗi bảng RAW là một asset | Xong (chưa chạy nạp thật qua Dagster) |
-| 2 | Asset dbt: mỗi model dbt là một asset (`@dbt_assets`) | Xong (chưa chạy `dbt build` thật qua Dagster) |
+| 1 | Asset dlt: mỗi bảng RAW là một asset | Xong (đã Materialize trong giao diện) |
+| 2 | Asset dbt: mỗi model dbt là một asset (`@dbt_assets`) | Xong (đã chạy `dbt build` qua Dagster, test đều pass) |
 | 3 | Nối lineage: bảng RAW của dlt chính là source của dbt | Xong (kiểm chứng trên đồ thị asset) |
 | 4 | Job chạy toàn chuỗi và job `--full-refresh` cho `fct_sales` | Chưa |
 | 5 | Lịch chạy | Chưa |
@@ -195,5 +195,28 @@ là `raw/<bảng>`. 40 asset gồm: 10 asset RAW của dlt, 20 asset dbt, và 10
 do dagster-dlt tự tạo, đại diện cho **bảng nguồn ở Postgres** (phía trước `raw/<bảng>`), nên đồ thị
 đi được từ PostgreSQL tới `fct_sales`. Có thể đổi tên chúng bằng `get_deps_asset_keys` của translator
 nếu muốn gọn hơn.
+
+### Kết quả chạy thật trong giao diện Dagster
+Chạy `make dagster`, vào **Lineage** (Global asset lineage), chọn các asset rồi **Materialize selected**.
+Ảnh chụp sau khi chạy:
+
+![Global asset lineage trong Dagster](../../assets/diagrams/dagster-asset-lineage.png)
+
+Những gì ảnh cho thấy:
+- Cột trái liệt kê asset theo nhóm: **`default`** (20 asset dbt: dimension, intermediate, staging, fact)
+  và **`raw`** (asset dlt, `group_name="raw"` đặt ở bước 1). Mọi asset có dấu tích xanh, tức đã
+  materialize.
+- Đồ thị: staging, intermediate, dimension nối vào `fct_sales`. Mỗi nút hiện thời điểm materialize,
+  số **asset check** (test dbt) đã pass, và nhãn công nghệ (`Snowflake`, `dbt`). Ví dụ `fct_sales`:
+  `24/24 Passed`, `dim_product`: `9/9`, `int_product_scd2`: `14/14`.
+- Panel phải (đang chọn `fct_sales`): danh sách check (`not_null_fct_sales_*`,
+  `dbt_utils_unique_combination_of_columns`, ...), metadata `dagster-dbt/materialization_type:
+  incremental`, `dagster/table_name: RETAIL_PULSE.marts.fct_sales`, `storage_kind: snowflake`,
+  resource `dbt`, và op `retail_dbt_assets`.
+- Test dbt hiện ra thành **asset check** gắn vào đúng model, nên thấy ngay model nào có test fail.
+
+Gợi ý cải thiện (chưa làm): 20 asset dbt đang nằm chung nhóm `default`. Có thể chia nhóm theo tầng
+(`staging`, `intermediate`, `marts`) bằng cách ghi đè `get_group_name` của `DagsterDbtTranslator`, để
+giao diện dễ đọc hơn.
 
 > Các bước 4 đến 5 sẽ được ghi vào file này khi hoàn thành.

@@ -359,7 +359,6 @@ class TransactionGenerator:
     def _generate(self, ctx: SeedContext) -> Iterator[tuple[dict, list[dict]]]:
         rng = self.rng
         product_ids = list(ctx.product_prices)
-        statuses, status_weights = list(STATUS_WEIGHTS), list(STATUS_WEIGHTS.values())
         now = datetime.now(TZ)
 
         # Chia tổng số giao dịch theo cửa hàng × ngày, cuối tuần đông gấp 1,4 lần
@@ -395,28 +394,72 @@ class TransactionGenerator:
                         day, time(hour, rng.randint(0, 59), rng.randint(0, 59)), TZ
                     )
 
-                    status = rng.choices(statuses, status_weights)[0]
-                    if status is TransactionStatus.CANCELLED:
-                        updated = ts + timedelta(minutes=rng.randint(1, 30))
-                    elif status is TransactionStatus.RETURNED:
-                        updated = ts + timedelta(days=rng.randint(1, 14), hours=rng.randint(0, 10))
-                    else:
-                        updated = ts
-                    updated = min(updated, now)
+                    yield self._build_transaction(ctx, product_ids, store_id, active, day, ts, now)
 
-                    tx_items = self._line_items(ctx, product_ids, day, ts)
-                    tx = {
-                        "store_id": store_id,
-                        "employee_id": rng.choice(active),
-                        "payment_method_id": rng.choices(
-                            ctx.payment_method_ids, ctx.payment_weights
-                        )[0],
-                        "transaction_ts": ts,
-                        "status": status,
-                        "created_at": ts,
-                        "updated_at": updated,
-                    }
-                    yield tx, tx_items
+    def _build_transaction(
+        self,
+        ctx: SeedContext,
+        product_ids: list[int],
+        store_id: int,
+        active: list[int],
+        day: date,
+        ts: datetime,
+        now: datetime,
+    ) -> tuple[dict, list[dict]]:
+        """Một giao dịch tại thời điểm ts. Thứ tự gọi random giữ nguyên để seed tái lập được."""
+        rng = self.rng
+        statuses, status_weights = list(STATUS_WEIGHTS), list(STATUS_WEIGHTS.values())
+        status = rng.choices(statuses, status_weights)[0]
+        if status is TransactionStatus.CANCELLED:
+            updated = ts + timedelta(minutes=rng.randint(1, 30))
+        elif status is TransactionStatus.RETURNED:
+            updated = ts + timedelta(days=rng.randint(1, 14), hours=rng.randint(0, 10))
+        else:
+            updated = ts
+        updated = min(updated, now)
+
+        tx_items = self._line_items(ctx, product_ids, day, ts)
+        tx = {
+            "store_id": store_id,
+            "employee_id": rng.choice(active),
+            "payment_method_id": rng.choices(ctx.payment_method_ids, ctx.payment_weights)[0],
+            "transaction_ts": ts,
+            "status": status,
+            "created_at": ts,
+            "updated_at": updated,
+        }
+        return tx, tx_items
+
+    def generate_at(
+        self, ctx: SeedContext, timestamps: list[datetime], now: datetime
+    ) -> TransactionBatch:
+        """Mỗi timestamp một giao dịch ở cửa hàng ngẫu nhiên có nhân viên đang làm hôm đó.
+
+        Dùng cho stream.py (bán thêm sau lần seed); dùng cùng luật bán hàng với seed.
+        """
+        product_ids = list(ctx.product_prices)
+        transactions: list[dict] = []
+        items: list[list[dict]] = []
+        for ts in timestamps:
+            day = ts.astimezone(TZ).date()
+            staffed = {
+                store_id: [
+                    e
+                    for e, s, en in ctx.employees_by_store.get(store_id, [])
+                    if s <= day and (en is None or en >= day)
+                ]
+                for store_id in ctx.store_ids
+            }
+            staffed = {sid: emps for sid, emps in staffed.items() if emps}
+            if not staffed:
+                continue
+            store_id = self.rng.choice(sorted(staffed))
+            tx, tx_items = self._build_transaction(
+                ctx, product_ids, store_id, staffed[store_id], day, ts, now
+            )
+            transactions.append(tx)
+            items.append(tx_items)
+        return TransactionBatch(transactions, items)
 
     def _line_items(
         self, ctx: SeedContext, product_ids: list[int], day: date, ts: datetime

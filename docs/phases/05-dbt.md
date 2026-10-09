@@ -278,6 +278,41 @@ Kết quả mong đợi: `PASS=30 ERROR=0`. Hiện có 900 phiên bản cho 500 
   khi join `transaction_ts` ở `fct_sales` nên dùng `::timestamp_tz` cho nhất quán.
 - `int_employee_scd2` chưa có test `complete` như bên product.
 
+### Kiểm chứng SCD2 bằng thay đổi thật ở nguồn
+Chạy một cycle `stream` (đổi giá của 5 sản phẩm, chuyển nhân viên 51 từ cửa hàng 7 sang 5), nạp lại,
+rồi build:
+
+```bash
+make stream && make ingest && make dbt-build
+```
+
+| Đại lượng | Trước | Sau | Ý nghĩa |
+|---|---|---|---|
+| `raw.product` | 900 dòng | 905 | RAW chỉ thêm dòng (append), 5 sản phẩm đổi |
+| `raw.employee` | 120 | 121 | 1 nhân viên chuyển cửa hàng |
+| `dim_product` (kể cả Unknown) | 901 | 906 | thêm đúng 5 phiên bản |
+| `dim_product` hiện hành | 501 | 501 | mỗi sản phẩm vẫn đúng một phiên bản hiện hành |
+| `dim_employee` | 121 | 122 | thêm đúng 1 phiên bản |
+| `fct_sales` | 270.973 | 270.973 | fact không đổi (không có giao dịch mới) |
+| Test dbt | 168 pass | 168 pass | không chồng lấn, đúng một phiên bản hiện hành vẫn đúng |
+
+Ví dụ sản phẩm 45 (`unit_cost` 22.300 đến 23.200, `unit_price` 32.000 đến 33.000) có hai phiên bản: bản
+cũ từ `1900-01-01` đến thời điểm đổi, bản mới từ thời điểm đó đến `9999-12-31` và `is_current`. Nhân viên
+51 tương tự (cửa hàng 7 sang 5).
+
+Điều quan trọng nhất: **548 dòng fact cũ của sản phẩm 45 vẫn trỏ vào phiên bản cũ và giữ `unit_cost` =
+22.300**, và không có dòng nào có `unit_cost` khác `unit_cost` của phiên bản dimension mà nó trỏ tới.
+Nghĩa là đổi giá về sau không làm sai lợi nhuận đã ghi, đúng mục đích của SCD2 (và chính là hợp đồng
+"giá vốn tại `transaction_ts`").
+
+Phép thử này (`make stream` thuần) không có giao dịch mới nên không kiểm tra được phần incremental của
+`fct_sales`; phần đó được kiểm chứng ở mục "Kiểm chứng incremental của `fct_sales` bằng giao dịch mới" bên dưới.
+
+Quan sát phụ: mốc `1900-01-01` và `9999-12-31` hiện ra với múi giờ `-08:00` (múi giờ phiên làm việc của
+Snowflake) thay vì UTC, vì `int_*_scd2` dùng `::timestamp` không múi giờ (xem "Chưa làm / cân nhắc sau").
+Không ảnh hưởng kết quả join vì hai mốc nằm rất xa mọi giao dịch, nhưng đổi sang `::timestamp_tz` ở
+UTC sẽ gọn hơn.
+
 ## Bước 5 — Marts: dimension và `fct_sales`
 
 Schema `MARTS`, materialize `table` (riêng `fct_sales` là `incremental`).
@@ -352,6 +387,37 @@ dbt build                       # toàn dự án: PASS=168
 Hiện có 270.973 dòng; 259.561 dòng không khuyến mãi (`promotion_key = -1`); không dòng nào có khóa
 `-2` hay `unit_cost` rỗng; 1.040 dòng có `gross_profit` âm (giảm giá cao hơn lợi nhuận gộp, không
 phải lỗi).
+
+### Kiểm chứng incremental của `fct_sales` bằng giao dịch mới
+`make stream-sales` sinh giao dịch bán hàng mới ở Postgres (xem [04-product-change-simulator.md](04-product-change-simulator.md),
+mục "Bán thêm"), rồi nạp và build:
+
+```bash
+make stream-sales && make ingest && make dbt-build
+```
+
+Một lần chạy thật (300 giao dịch mới, từ 2026-10-08 13:58 đến 2026-10-09 21:53, giờ địa phương):
+
+| Đại lượng | Trước | Sau | Ý nghĩa |
+|---|---|---|---|
+| dlt nạp | | 300 `sales_transaction`, 823 `sales_transaction_item` | chỉ dòng mới (con trỏ `updated_at`) |
+| `stg_sales_transaction` (completed) | 94.982 | 95.265 | +283: 94% trong 300 mới là completed |
+| `stg_sales_transaction_item` | 270.973 | 271.766 | +793 dòng chi tiết completed |
+| `fct_sales` | 270.973 | **271.766** | **đúng +793, bằng số dòng nguồn đã lọc**; test đếm dòng pass |
+| Khóa `-2`, `unit_cost` rỗng trong fact | 0 | 0 | mọi dòng mới khớp dimension và phiên bản |
+| `date_key` của dòng mới | | 20261008, 20261009 | ngày theo giờ địa phương |
+| `time_key` của dòng mới | | 705 đến 2156 | 07:05 đến 21:56, trong giờ mở cửa |
+| Test dbt | 168 pass | 168 pass | |
+
+Điều đáng chú ý:
+- **Incremental chỉ thêm dòng mới:** fact tăng đúng bằng số dòng mới; dòng cũ không đổi. Chạy `dbt build`
+  lần hai ngay sau đó, `fct_sales` vẫn 271.766 dòng (không sinh trùng nhờ `unique_key` và `>=`).
+- **SCD2 hoạt động ngay trên dòng mới:** trong 793 dòng mới, 767 trỏ vào phiên bản `dim_product` hiện hành
+  và 26 trỏ vào phiên bản cũ, vì chúng xảy ra trước lúc sản phẩm đổi giá (`transaction_ts <
+  valid_from` của phiên bản mới), nên `unit_cost` đúng tại thời điểm bán.
+- Một chi tiết của dữ liệu mô phỏng: `regular_price` của giao dịch mới là giá bán **lúc sinh dữ liệu**.
+  Giao dịch có thời điểm trước một lần đổi giá trong cùng buổi mang giá mới, còn `unit_cost` đúng phiên
+  bản cũ. Không test nào so `regular_price` với `unit_price` của dimension, nên không ảnh hưởng.
 
 ### Hạn chế đã biết
 - **Dòng đã gán khóa `-2` không tự sửa** khi dimension có thêm khóa sau đó. Lần chạy incremental sau
