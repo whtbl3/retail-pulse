@@ -3,8 +3,10 @@ COMPOSE := docker compose --env-file .env -f infras/docker-compose.yml
 DAYS ?= 365
 ROWS ?= 100000
 DLT_PIPELINE ?= retail_oltp_to_snowflake
+# dbt chạy từ dbt/, nạp .env trước vì profiles.yml dùng env_var(); dùng dbt trong .venv (qua uv run)
+DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install up down snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-loop test lint
+.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-loop test lint dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs dagster clean
 
 help: ## Liệt kê các lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -54,3 +56,28 @@ lint: ## Ruff
 
 clean-raw: ## Xoá RAW trên Snowflake + state dlt, không hỏi xác nhận
 	uv run python -m retail_pulse.ingestion.clean --yes
+
+dbt-deps: ## Cài package dbt (dbt_utils) vào dbt/dbt_packages
+	$(DBT) deps
+
+dbt-parse: ## Sinh dbt/target/manifest.json (Dagster cần file này; `make dagster` tự sinh, validate/chạy không dev thì không)
+	$(DBT) parse
+
+dbt-build: ## dbt build toàn dự án (model + test), cần RAW đã có dữ liệu
+	$(DBT) build
+
+dbt-test: ## Chỉ chạy test dbt
+	$(DBT) test
+
+dbt-full-refresh: ## Dựng lại fct_sales từ đầu (sửa dòng khóa -2); không đụng RAW
+	$(DBT) build -s fct_sales --full-refresh
+
+dbt-docs: ## Sinh và mở dbt docs (lineage) ở http://localhost:8080
+	$(DBT) docs generate && $(DBT) docs serve
+
+dagster: ## Mở Dagster (http://localhost:3000); lịch sử chạy mất khi tắt nếu chưa đặt DAGSTER_HOME
+	uv run dagster dev
+
+clean: ## Xóa file sinh ra (cache, dbt/target, dbt/logs); không đụng .env, .venv, key, dbt_packages
+	rm -rf .pytest_cache .ruff_cache logs dbt/target dbt/logs dbt/package-lock.concurrent-update-lock
+	find . -name __pycache__ -type d -not -path './.venv/*' -prune -exec rm -rf {} +

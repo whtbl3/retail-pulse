@@ -10,7 +10,7 @@ trong `.claude/CLAUDE.md`; file này ghi lại từng bước đã làm.
 | 3 | Staging + test | Xong |
 | 4 | Intermediate: SCD2 product, employee | Xong |
 | 5 | Marts: dimension, `fct_sales` incremental | Xong |
-| 6 | Lineage, review | Chưa |
+| 6 | Lineage, review | Xong |
 
 ## Bước 1 — Kết nối và `dbt debug`
 
@@ -294,6 +294,12 @@ Schema `MARTS`, materialize `table` (riêng `fct_sales` là `incremental`).
   "No promotion". `-1` khác `-2`: `-1` là dòng hàng không có khuyến mãi (hợp lệ), `-2` là khóa chưa có
   trong dimension (dữ liệu đến trễ).
 - `promotion_label` dùng `FM` trong khuôn số để bỏ khoảng trắng đầu; phần trăm nguyên không hiện `.00`.
+  Ví dụ: `15% off`, `10,000 VND off`.
+- **Ngôn ngữ của nhãn: tiếng Anh, cho toàn dashboard.** Dữ liệu nguồn (danh mục `Beverages`, `Snacks`;
+  phương thức `cash`, `card`; tên sản phẩm, nhãn hàng) đã là tiếng Anh, nên mọi nhãn do dbt tạo ra
+  cũng tiếng Anh để dashboard không lẫn hai ngôn ngữ: `dim_date` (`January`, `Monday`), `dim_promotion`
+  (`15% off`, `No promotion`), `dim_time` (`Morning`, `AM`), dòng `Unknown`. Tên cột, model và tài liệu
+  nội bộ giữ tiếng Việt/Anh như cũ. Đổi sang tiếng Việt sẽ phải đổi cả dữ liệu nguồn.
 - Dữ liệu cá nhân (`salary`, `address` của `dim_employee`) gắn `meta: {pii: true}`.
 - Test: `unique` + `not_null` cho khóa thay thế, `relationships` (`dim_employee.store_id` sang
   `dim_store`; `category_id`, `brand_id` sang staging), và singular test cho `dim_date` (đủ số ngày,
@@ -320,6 +326,10 @@ Grain: một dòng mỗi dòng chi tiết (`transaction_id`, `line_number`) củ
   `convert_timezone(var('local_tz'), transaction_ts)` (giờ địa phương 7 đến 21). Tính theo UTC thì
   58.804 dòng bị gán buổi `Night` sai, và ngày có thể nhảy sang hôm sau. `transaction_ts` gốc (UTC)
   vẫn giữ để join khoảng SCD2.
+- **Khóa ngày/giờ tra lại dimension:** `date_key`, `time_key` tính từ giờ địa phương rồi `left join` với
+  `dim_date`, `dim_time` và `coalesce` về `-2`, giống năm dimension còn lại. Nhờ vậy hợp đồng "mọi
+  dimension có dòng -2" dùng thật cho cả hai dimension sinh ra (ngày hoặc giờ không có trong dimension
+  rơi về `-2`, không làm fail test `relationships`), và lineage có đủ hai mũi tên tới `fct_sales`.
 
 ### Test của `fct_sales`
 - `unique_combination_of_columns (transaction_id, line_number)`.
@@ -369,7 +379,7 @@ phải lỗi).
 - Hóa đơn `completed` sau đó đổi trạng thái không cập nhật fact (ngoài phạm vi; test canh giả định).
 - Chưa dùng `::timestamp_tz` ở `int_*_scd2`; vô hại vì `UNION ALL` ở dimension ép về `timestamp_tz`.
 
-## Bước 6 — Lineage và review (đang làm)
+## Bước 6 — Lineage và review
 
 ### Lineage
 Sơ đồ dưới được sinh từ `dbt/target/manifest.json` (sau `dbt docs generate`), nên khớp với code. Xem
@@ -418,11 +428,13 @@ flowchart LR
   subgraph fct["MARTS fact"]
     fct_sales
   end
+  dim_date --> fct_sales
   dim_employee --> fct_sales
   dim_payment_method --> fct_sales
   dim_product --> fct_sales
   dim_promotion --> fct_sales
   dim_store --> fct_sales
+  dim_time --> fct_sales
   int_employee_scd2 --> dim_employee
   int_product_scd2 --> dim_product
   src_brand --> stg_brand
@@ -452,14 +464,13 @@ staging, và `stg_sales_transaction` đi vào `stg_sales_transaction_item` (stag
 ![Lineage nhánh bán hàng ở staging](../../assets/diagrams/dbt-lineage-sales-staging.png)
 
 Mười source, mười model staging, hai model intermediate, bảy dimension (hai trong số đó tự sinh), một
-fact; 25 cạnh `ref`/`source`.
+fact; 27 cạnh `ref`/`source`.
 
 ### Quan sát khi đọc lineage
-- **`fct_sales` phụ thuộc đúng bảy nút:** hai model staging bán hàng và năm dimension (`dim_product`,
-  `dim_employee`, `dim_store`, `dim_payment_method`, `dim_promotion`).
-- **`dim_date` và `dim_time` không có cạnh nào.** Chúng tự sinh (không đọc source) và `fct_sales` tự
-  tính `date_key`, `time_key` thay vì `ref` tới chúng, nên chỉ nối với fact qua test `relationships`.
-  Hợp lý, nhưng lineage không cho thấy fact "dùng" hai dimension này.
+- **`fct_sales` phụ thuộc đúng chín nút:** hai model staging bán hàng và bảy dimension (`dim_product`,
+  `dim_employee`, `dim_store`, `dim_payment_method`, `dim_promotion`, `dim_date`, `dim_time`).
+- **`dim_date` và `dim_time` có cạnh tới `fct_sales`** (lúc đầu không có, vì fact tự tính khóa thay vì
+  `ref`; đã chuyển sang `left join` để lineage đúng và dùng được dòng `-2`).
 - **Ba model staging không có model nào dùng:** `stg_brand`, `stg_category`, `stg_promotion_product`.
   `stg_brand`, `stg_category` chỉ được test `relationships` của `dim_product` tham chiếu;
   `stg_promotion_product` dành cho "promotion coverage" (factless fact) chưa làm. Chấp nhận được vì
@@ -468,5 +479,24 @@ fact; 25 cạnh `ref`/`source`.
   lọc `completed` (xem bước 3).
 - Chiều mũi tên luôn đi source, staging, intermediate, marts; không có mũi tên ngược tầng.
 
-## Các bước còn lại
-Phần review còn lại của bước 6 sẽ được ghi vào mục Bước 6 phía trên khi hoàn thành.
+### Lệnh qua Makefile
+Chạy từ thư mục gốc repo; các lệnh `dbt-*` tự nạp `.env` và dùng dbt trong `.venv`:
+
+| Lệnh | Việc |
+|---|---|
+| `make dbt-deps` | Cài package dbt (`dbt_utils`) vào `dbt/dbt_packages` |
+| `make dbt-parse` | Sinh `dbt/target/manifest.json` (Dagster cần file này, xem phase 6) |
+| `make dbt-build` | `dbt build` toàn dự án (model và test), cần RAW đã có dữ liệu |
+| `make dbt-test` | Chỉ chạy test |
+| `make dbt-full-refresh` | Dựng lại `fct_sales` từ đầu, dùng để sửa dòng khóa `-2`; không đụng RAW |
+| `make dbt-docs` | Sinh và mở dbt docs (lineage) ở `http://localhost:8080` |
+| `make clean` | Xóa file sinh ra (cache, `dbt/target`, `dbt/logs`); không đụng `.env`, `.venv`, key, `dbt_packages`; sau đó cần `make dbt-parse` để Dagster có manifest |
+
+### Việc còn mở sau bước 6
+- Đổi `::timestamp` thành `::timestamp_tz` ở `int_*_scd2` (không bắt buộc, xem hạn chế ở bước 5).
+- Test `severity: warn` đếm dòng có khóa `-2` trong `fct_sales` (chưa thêm).
+- Lịch `--full-refresh` cho `fct_sales`: đặt ở Dagster ở phase sau; hiện chưa có lịch.
+  Đã cân nhắc Snowflake Tasks để lập lịch; chọn Dagster vì Tasks chỉ chạy SQL bên trong Snowflake,
+  không điều phối được bước dlt (đọc từ Postgres), còn Dagster nối cả chuỗi nạp dữ liệu, dbt và kiểm tra
+  trong một đồ thị có thử lại và lịch sử chạy.
+- Phân tích khuyến mãi dùng `stg_promotion_product` (factless fact): chưa làm, ngoài phạm vi hiện tại.

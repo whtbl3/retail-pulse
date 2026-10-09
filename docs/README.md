@@ -21,9 +21,8 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 2 | Seed dữ liệu lịch sử (`seed.py`) | Xong | [phases/02-historical-seed.md](phases/02-historical-seed.md) |
 | 3 | dlt ingestion full + incremental sang Snowflake RAW | Xong | [phases/03-ingestion-snowflake.md](phases/03-ingestion-snowflake.md) |
 | 4 | Mô phỏng thay đổi giá sản phẩm (`stream.py`) | Xong | [phases/04-product-change-simulator.md](phases/04-product-change-simulator.md) |
-| 5 | dbt: staging, SCD2, star schema | Đang làm (bước 1/6 xong) | [phases/05-dbt.md](phases/05-dbt.md) |
-| 5 | dbt: sources, staging, SCD2, marts | Chưa làm | — |
-| 6 | Dagster orchestration | Chưa làm | — |
+| 5 | dbt: staging, SCD2, star schema | Xong | [phases/05-dbt.md](phases/05-dbt.md) |
+| 6 | Dagster orchestration | Đang làm | [phases/06-dagster.md](phases/06-dagster.md) |
 | 7 | Preset dashboards | Chưa làm | — |
 | 8 | Great Expectations | Tùy chọn | — |
 
