@@ -86,7 +86,7 @@ models:
             - updated_at
 
   - name: stg_employee
-    description: Mọi phiên bản của nhân viên, một dòng mỗi (employee_id, updated_at). Đã dedup bản sao ở biên cursor của dlt, giữ nguyên lịch sử để dựng SCD2. Không đưa salary vào vì dự án không dùng.
+    description: Mọi phiên bản của nhân viên, một dòng mỗi (employee_id, updated_at). Đã dedup bản sao ở biên cursor của dlt, giữ nguyên lịch sử để dựng SCD2. Có salary (dữ liệu nhạy cảm, lấy giá trị mới nhất ở dim_employee).
     columns:
       - name: employee_id
         description: Mã nhân viên (đổi tên từ id). Lặp lại qua các phiên bản nên không unique một mình.
@@ -107,7 +107,7 @@ models:
             - updated_at
 
   - name: stg_sales_transaction
-    description: Giao dịch bán hàng, một dòng mỗi transaction_id. Đã dedup bản sao ở biên cursor của dlt. Chưa lọc theo status; việc chỉ giữ giao dịch completed làm ở tầng sau.
+    description: Giao dịch bán hàng, một dòng mỗi transaction_id. Đã dedup bản sao ở biên cursor của dlt. Chỉ giữ giao dịch status = completed; cột status không đi tiếp vì không còn phân biệt.
     columns:
       - name: transaction_id
         description: Khóa chính của giao dịch.
@@ -132,15 +132,9 @@ models:
           - relationships:
               to: ref('stg_payment_method')
               field: payment_method_id
-      - name: status
-        description: Trạng thái giao dịch, một trong completed, cancelled, returned.
-        data_tests:
-          - not_null
-          - accepted_values:
-              values: ['completed', 'cancelled', 'returned']
 
   - name: stg_sales_transaction_item
-    description: Dòng chi tiết của giao dịch, một dòng mỗi (transaction_id, line_number). Đã dedup bản sao ở biên cursor của dlt.
+    description: Dòng chi tiết của giao dịch, một dòng mỗi (transaction_id, line_number). Đã dedup bản sao ở biên cursor của dlt. Chỉ giữ dòng của giao dịch completed.
     columns:
       - name: transaction_id
         description: Giao dịch chứa dòng này.
