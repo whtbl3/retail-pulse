@@ -1,0 +1,296 @@
+version: 2
+
+models:
+  - name: dim_store
+    description: Dimension cửa hàng (Type 1), một dòng mỗi cửa hàng cộng thành viên -2 "Unknown" cho khóa chưa có trong dimension.
+    columns:
+      - name: store_key
+        description: Khóa thay thế (hash của store_id); -2 cho Unknown.
+        data_tests:
+          - unique
+          - not_null
+      - name: store_id
+        description: Mã cửa hàng ở nguồn (khóa tự nhiên); -2 cho Unknown.
+        data_tests:
+          - unique
+          - not_null
+  - name: dim_payment_method
+    description: Dimension phương thức thanh toán (Type 1), một dòng mỗi phương thức cộng thành viên -2 "Unknown" cho khóa chưa có trong dimension.
+    columns:
+      - name: payment_method_key
+        description: Khóa thay thế (hash của payment_method_id); -2 cho Unknown.
+        data_tests:
+          - unique
+          - not_null
+      - name: payment_method_id
+        description: Mã phương thức thanh toán ở nguồn (khóa tự nhiên); -2 cho Unknown.
+        data_tests:
+          - unique
+          - not_null
+      - name: payment_method_name
+        description: Tên phương thức thanh toán (cash, card, e_wallet, bank_transfer); "Unknown" cho thành viên -2.
+        data_tests:
+          - accepted_values:
+              values: ['cash', 'card', 'e_wallet', 'bank_transfer', 'Unknown']
+  - name: dim_promotion
+    description: >
+      Dimension khuyến mãi (Type 1), một dòng mỗi chương trình. Có hai thành viên đặc biệt: -1 "No promotion"
+      cho dòng hàng không có khuyến mãi, và -2 "Unknown" cho khóa chưa có trong dimension.
+    columns:
+      - name: promotion_key
+        description: Khóa thay thế (hash của promotion_id); -1 cho No promotion, -2 cho Unknown.
+        data_tests:
+          - unique
+          - not_null
+      - name: promotion_id
+        description: Mã khuyến mãi ở nguồn (khóa tự nhiên); -1 cho No promotion, -2 cho Unknown.
+        data_tests:
+          - unique
+          - not_null
+      - name: promotion_type
+        description: Loại giảm giá, percentage hoặc fixed_amount; rỗng cho hai thành viên đặc biệt -1 và -2.
+        data_tests:
+          - accepted_values:
+              values: ['fixed_amount', 'percentage']
+      - name: promotion_amount
+        description: Mức giảm, theo phần trăm nếu percentage hoặc số tiền trên mỗi đơn vị nếu fixed_amount; rỗng cho -1 và -2.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: promotion_label
+        description: Nhãn hiển thị, ví dụ "Giảm 20%" hoặc "Giảm 5,000 đ"; "No promotion" cho -1 và "Unknown" cho -2.
+        data_tests:
+          - not_null
+        
+  - name: dim_product
+    description: Dimension sản phẩm (SCD2), một dòng mỗi phiên bản, cộng thành viên -2 "Unknown". Tính toàn vẹn SCD2 (không chồng lấn, một phiên bản hiện hành) được kiểm tra ở int_product_scd2.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [product_id, valid_from]
+    columns:
+      - name: product_key
+        description: Khóa thay thế (hash của product_id và valid_from); -2 cho Unknown.
+        data_tests: [unique, not_null]
+      - name: product_id
+        description: Mã sản phẩm ở nguồn (khóa tự nhiên); lặp lại qua các phiên bản; -2 cho Unknown.
+        data_tests: [not_null]
+      - name: product_sku
+        description: Mã SKU mới nhất của sản phẩm (Type 1, giống nhau ở mọi phiên bản).
+      - name: product_name
+        description: Tên mới nhất của sản phẩm (Type 1, giống nhau ở mọi phiên bản).
+      - name: category_id
+        description: Mã danh mục tại phiên bản này (Type 2); rỗng cho Unknown.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_category')
+                field: category_id
+      - name: brand_id
+        description: Mã thương hiệu tại phiên bản này (Type 2); rỗng cho Unknown.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_brand')
+                field: brand_id
+      - name: unit_price
+        description: Giá bán tại phiên bản này (Type 2); rỗng cho Unknown.
+      - name: unit_cost
+        description: Giá vốn tại phiên bản này (Type 2); rỗng cho Unknown, nên giá vốn của giao dịch gán Unknown cũng rỗng.
+      - name: valid_from
+        description: Thời điểm phiên bản bắt đầu có hiệu lực (bao gồm); phiên bản đầu là 1900-01-01.
+        data_tests: [not_null]
+      - name: valid_to
+        description: Thời điểm phiên bản hết hiệu lực (không bao gồm); phiên bản hiện hành là 9999-12-31.
+        data_tests: [not_null]
+      - name: is_current
+        description: TRUE nếu là phiên bản hiện hành.
+        data_tests: [not_null]
+
+  - name: dim_employee
+    description: Dimension nhân viên (SCD2 theo store_id), một dòng mỗi phiên bản, cộng thành viên -2 "Unknown".
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [employee_id, valid_from]
+    columns:
+      - name: employee_key
+        description: Khóa thay thế (hash của employee_id và valid_from); -2 cho Unknown.
+        data_tests: [unique, not_null]
+      - name: employee_id
+        description: Mã nhân viên ở nguồn (khóa tự nhiên); lặp lại qua các phiên bản; -2 cho Unknown.
+        data_tests: [not_null]
+      - name: store_id
+        description: Cửa hàng làm việc tại phiên bản này (Type 2); -2 cho Unknown.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_store')
+                field: store_id
+      - name: employee_name
+        description: Họ tên mới nhất (Type 1).
+      - name: salary
+        description: Lương mới nhất (Type 1); rỗng cho Unknown.
+        config:
+          meta: {pii: true}
+      - name: address
+        description: Địa chỉ mới nhất (Type 1); rỗng cho Unknown.
+        config:
+          meta: {pii: true}
+      - name: start_date
+        description: Ngày bắt đầu làm việc (Type 1).
+      - name: end_date
+        description: Ngày kết thúc làm việc (Type 1); rỗng nếu còn làm.
+      - name: valid_from
+        description: Thời điểm phiên bản bắt đầu có hiệu lực (bao gồm); phiên bản đầu là 1900-01-01.
+        data_tests: [not_null]
+      - name: valid_to
+        description: Thời điểm phiên bản hết hiệu lực (không bao gồm); phiên bản hiện hành là 9999-12-31.
+        data_tests: [not_null]
+      - name: is_current
+        description: TRUE nếu là phiên bản hiện hành.
+        data_tests: [not_null]
+
+  - name: dim_date
+    description: Dimension ngày, một dòng mỗi ngày từ date_start trong date_days ngày, cộng thành viên -2 "Unknown". Sinh từ vars, không đọc nguồn nào. Nhãn tháng/thứ bằng tiếng Việt.
+    columns:
+      - name: date_key
+        description: Khóa ngày dạng số YYYYMMDD (ví dụ 20250301); -2 cho Unknown.
+        data_tests: [unique, not_null]
+      - name: full_date
+        description: Ngày dạng DATE; rỗng cho Unknown.
+        data_tests:
+          - unique
+          - not_null:
+              config: {where: "date_key <> -2"}
+      - name: year
+        description: Năm.
+      - name: quarter
+        description: Quý trong năm (1-4).
+      - name: month
+        description: Tháng trong năm (1-12).
+      - name: month_name
+        description: Tên tháng, ví dụ "Tháng 3".
+      - name: day_of_month
+        description: Ngày trong tháng (1-31).
+      - name: day_of_week
+        description: Thứ trong tuần theo ISO (1 = Thứ Hai ... 7 = Chủ Nhật).
+      - name: day_name
+        description: Tên thứ, ví dụ "Thứ Hai".
+      - name: week_of_year
+        description: Tuần ISO trong năm.
+      - name: is_weekend
+        description: TRUE nếu là Thứ Bảy hoặc Chủ Nhật.
+
+  - name: dim_time
+    description: Dimension giờ phút, 1.440 dòng (mỗi phút trong ngày) cộng thành viên -2 "Unknown". Sinh bằng GENERATOR, không đọc nguồn nào.
+    columns:
+      - name: time_key
+        description: Khóa giờ phút dạng số HHMM (ví dụ 1435 là 14:35); -2 cho Unknown.
+        data_tests: [unique, not_null]
+      - name: time_of_day
+        description: Giờ phút dạng TIME; rỗng cho Unknown.
+      - name: hour_24
+        description: Giờ 0-23.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 23}
+      - name: minute
+        description: Phút 0-59.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 59}
+      - name: hour_12
+        description: Giờ 1-12 (kiểu 12 giờ).
+      - name: am_pm
+        description: AM hoặc PM; "Unknown" cho -2.
+      - name: day_part
+        description: Buổi trong ngày (Morning, Afternoon, Evening, Night); "Unknown" cho -2.
+
+  - name: fct_sales
+    description: Fact bán hàng (transaction fact), một dòng mỗi dòng chi tiết của hóa đơn completed. Mọi số đo tiền và số lượng đều cộng được, trừ regular_price và unit_cost (giá đơn vị). Các tỷ lệ (biên lợi nhuận, giá trị hóa đơn trung bình) tính ở Preset, không lưu trong fact.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [transaction_id, line_number]
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "net_amount >= 0"}
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "discount_amount <= gross_amount"}
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "quantity > 0"}
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "gross_amount >= 0"}
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "coupon_amount >= 0"}
+    columns:
+      - name: date_key
+        description: Khóa ngày theo giờ địa phương (local_tz), dạng YYYYMMDD.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: date_key}}
+      - name: time_key
+        description: Khóa giờ phút theo giờ địa phương (local_tz), dạng HHMM.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_time'), field: time_key}}
+      - name: product_key
+        description: Khóa phiên bản sản phẩm hợp lệ tại transaction_ts; -2 nếu không khớp.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_product'), field: product_key}}
+      - name: store_key
+        description: Khóa cửa hàng; -2 nếu chưa có trong dimension.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_store'), field: store_key}}
+      - name: employee_key
+        description: Khóa phiên bản nhân viên hợp lệ tại transaction_ts; -2 nếu không khớp.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_employee'), field: employee_key}}
+      - name: payment_method_key
+        description: Khóa phương thức thanh toán; -2 nếu chưa có trong dimension.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_payment_method'), field: payment_method_key}}
+      - name: promotion_key
+        description: Khóa khuyến mãi; -1 nếu dòng không có khuyến mãi, -2 nếu có mã nhưng chưa có trong dimension.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_promotion'), field: promotion_key}}
+      - name: transaction_id
+        description: Mã hóa đơn (degenerate dimension).
+        data_tests: [not_null]
+      - name: line_number
+        description: Số thứ tự dòng trong hóa đơn (degenerate dimension).
+        data_tests: [not_null]
+      - name: transaction_ts
+        description: Thời điểm giao dịch (UTC); dùng để join khoảng với các dimension SCD2.
+        data_tests: [not_null]
+      - name: quantity
+        description: Số lượng bán. Cộng được.
+      - name: regular_price
+        description: Giá bán đơn vị tại thời điểm bán. Không cộng được.
+      - name: unit_cost
+        description: Giá vốn đơn vị của phiên bản sản phẩm hợp lệ tại transaction_ts, ghi vào fact lúc nạp; rỗng nếu product_key là -2. Không cộng được.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn   # sản phẩm đến trễ là chấp nhận được; xem docs/phases/05-dbt.md
+      - name: gross_amount
+        description: quantity × regular_price. Cộng được.
+      - name: discount_amount
+        description: Giảm giá khuyến mãi tính theo từng đơn vị (percentage hoặc fixed_amount); 0 cho -1 và -2. Cộng được.
+      - name: coupon_amount
+        description: Giảm giá bằng phiếu, tính một lần cho cả dòng (không nhân số lượng). Cộng được.
+      - name: net_amount
+        description: gross_amount − discount_amount − coupon_amount. Cộng được.
+      - name: cost_amount
+        description: quantity × unit_cost. Cộng được.
+      - name: gross_profit
+        description: net_amount − cost_amount; có thể âm khi giảm giá cao hơn lợi nhuận gộp. Cộng được.
+      - name: source_updated_at
+        description: Mốc cập nhật lớn hơn của dòng chi tiết và hóa đơn; làm watermark cho lần chạy incremental sau.

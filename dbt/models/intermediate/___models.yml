@@ -2,7 +2,77 @@ version: 2
 
 models:
   - name: int_product_scd2
-    description: Các phiên bản SCD2 của sản phẩm, một dòng mỗi phiên bản. Theo dõi unit_cost, unit_price, category_id, brand_id; các cột khác lấy giá trị mới nhất (Type 1).
-    # TODO(human): thêm test. Gợi ý khóa của model này là gì? Còn khoảng valid_from/valid_to
-    # không chồng lấn và "đúng một phiên bản hiện hành" mỗi sản phẩm thì kiểm bằng cách nào?
-    # (Không có sẵn test generic; nghĩ tới singular test, tức một câu SELECT trả về các dòng SAI.)
+    description: >
+      Dimension sản phẩm SCD Type 2. Theo dõi thay đổi của unit_cost, unit_price,
+      category_id, brand_id. product_sku và product_name là Type 1 (giá trị mới nhất).
+      Phiên bản đầu bắt đầu từ 1900-01-01, phiên bản hiện hành có valid_to = 9999-12-31.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - product_id
+              - valid_from
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(valid_to = '9999-12-31'::timestamp) = is_current"
+    columns:
+      - name: product_id
+        description: Mã sản phẩm (khóa tự nhiên).
+        data_tests:
+          - not_null
+      - name: valid_from
+        description: Thời điểm phiên bản bắt đầu có hiệu lực.
+        data_tests:
+          - not_null
+      - name: valid_to
+        description: Thời điểm hết hiệu lực (loại trừ). 9999-12-31 nếu là phiên bản hiện hành.
+        data_tests:
+          - not_null
+      - name: is_current
+        description: TRUE nếu là phiên bản hiện hành.
+        data_tests:
+          - not_null
+      - name: unit_price
+        data_tests:
+          - not_null
+      - name: unit_cost
+        data_tests:
+          - not_null
+
+  - name: int_employee_scd2
+    description: >
+      Dimension nhân viên SCD Type 2, một dòng mỗi phiên bản. Chỉ store_id được theo dõi lịch sử;
+      employee_name (gộp first_name, last_name), salary, address, start_date, end_date là Type 1
+      (giá trị mới nhất). Không có date_of_birth, phone_number. Phiên bản đầu bắt đầu từ 1900-01-01,
+      phiên bản hiện hành có valid_to = 9999-12-31.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - employee_id
+              - valid_from
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(valid_to = '9999-12-31'::timestamp) = is_current"
+      
+    columns:
+      - name: employee_id
+        description: Mã nhân viên (khóa tự nhiên), lặp lại qua các phiên bản.
+        data_tests:
+          - not_null
+      - name: valid_from
+        description: Thời điểm phiên bản bắt đầu có hiệu lực (bao gồm).
+        data_tests:
+          - not_null
+      - name: valid_to
+        description: Thời điểm hết hiệu lực (loại trừ). 9999-12-31 nếu là phiên bản hiện hành.
+        data_tests:
+          - not_null
+      - name: store_id
+        description: Cửa hàng nhân viên làm việc trong phiên bản này.
+        data_tests:
+          - not_null
+      - name: is_current
+        description: TRUE nếu là phiên bản hiện hành.
+        data_tests:
+          - not_null
