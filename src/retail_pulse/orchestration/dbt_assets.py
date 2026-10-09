@@ -16,4 +16,8 @@ dbt_project.prepare_if_dev()
 
 @dbt_assets(manifest=dbt_project.manifest_path)
 def retail_dbt_assets(context: AssetExecutionContext, dbt: DbtCliResource):
-    yield from dbt.cli(["build"], context=context).stream()
+    args = ["build"]
+    # Job fct_sales_full_refresh đặt tag này; dbt chỉ dựng lại các asset được chọn của lần chạy đó
+    if context.run.tags.get("full_refresh") == "true":
+        args.append("--full-refresh")
+    yield from dbt.cli(args, context=context).stream()
