@@ -1,14 +1,17 @@
-"""Mô phỏng thay đổi trên Postgres OLTP: giá của product và chuyển cửa hàng của employee.
+"""Mô phỏng thay đổi trên Postgres OLTP: giá của product, chuyển cửa hàng của employee, bán thêm.
 
-Chỉ UPDATE `unit_cost` (thường xuyên), `unit_price` (hiếm) của product có sẵn, và `store_id` của
-vài employee đang làm việc. `updated_at` do trigger trong DB tự cập nhật; lịch sử là việc của
-dlt + dbt.
+Mặc định chỉ UPDATE `unit_cost` (thường xuyên), `unit_price` (hiếm) của product có sẵn, và
+`store_id` của vài employee đang làm việc. `updated_at` do trigger trong DB tự cập nhật; lịch sử là
+việc của dlt + dbt. Với `--sales N`, mỗi cycle còn INSERT thêm N giao dịch bán hàng mới (cùng luật
+bán hàng với seed.py) vào khoảng thời gian đã trôi qua kể từ giao dịch gần nhất, trong giờ mở cửa.
 
     SourceRepository.list_active_products()   -> list[ProductRecord]
     SourceRepository.list_active_employees()  -> list[EmployeeRecord]
     ChangePolicy.plan_changes()               -> list[ProductChangeEvent]    (hàm thuần, không I/O)
     ChangePolicy.plan_transfers()             -> list[EmployeeTransferEvent] (hàm thuần, không I/O)
     SourceRepository.apply_changes()          -> StreamApplyResult           (một transaction DB)
+    SourceRepository.load_sales_context()     -> SeedContext                 (với --sales)
+    TransactionGenerator.generate_at()        -> TransactionBatch            (với --sales)
 """
 
 from __future__ import annotations
@@ -17,15 +20,35 @@ import argparse
 import logging
 import math
 import time
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from random import Random
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from retail_pulse.generator.common import RandomSource, round_to_step
+from retail_pulse.generator.common import TZ, RandomSource, round_to_step
+from retail_pulse.generator.seed import (
+    PAYMENT_METHODS,
+    SeedConfig,
+    SeedContext,
+    SeedRepository,
+    TransactionBatch,
+    TransactionGenerator,
+)
 from retail_pulse.oltp.db import SessionLocal
-from retail_pulse.oltp.models import Employee, Product, Store
+from retail_pulse.oltp.models import (
+    Employee,
+    PaymentMethod,
+    Product,
+    Promotion,
+    PromotionProduct,
+    SalesTransaction,
+    Store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +57,8 @@ PRICE_STEP = 1000  # giá bán làm tròn tới 1.000đ
 
 REASON_COST = "supplier_cost_adjustment"
 REASON_PRICE = "price_revision"
+
+OPEN_HOUR, CLOSE_HOUR = 7, 22  # giờ mở cửa 7h–22h, giống seed.py
 
 
 # ---------------------------------------------------------------- data contracts
@@ -46,6 +71,7 @@ class StreamConfig:
     price_change_pct_min: float = 0.01
     price_change_pct_max: float = 0.08
     employees_per_tick: int = 1  # số employee chuyển cửa hàng mỗi cycle, 0 = tắt
+    sales_per_tick: int = 0  # số giao dịch bán hàng mới mỗi cycle, 0 = tắt
     interval_seconds: float = 30  # chỉ dùng khi chạy loop
     random_seed: int | None = None
 
@@ -61,6 +87,8 @@ class StreamConfig:
             raise ValueError("price_change_probability phải trong [0, 1]")
         if self.employees_per_tick < 0:
             raise ValueError("employees_per_tick phải >= 0")
+        if self.sales_per_tick < 0:
+            raise ValueError("sales_per_tick phải >= 0")
         if self.interval_seconds <= 0:
             raise ValueError("interval_seconds phải > 0")
 
@@ -117,6 +145,7 @@ class StreamTickResult:
     planned_events: int
     applied_events: int
     transferred_employees: int
+    inserted_transactions: int = 0
 
 
 class NoProductsError(RuntimeError):
@@ -193,6 +222,41 @@ def ceil_to_step(value: Decimal, step: int) -> Decimal:
     return Decimal(math.ceil(value / step) * step)
 
 
+# ---------------------------------------------------------------- sales timeline
+def open_intervals(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Các khoảng giờ mở cửa (theo giờ địa phương) nằm trong (start, end]. Hàm thuần."""
+    intervals: list[tuple[datetime, datetime]] = []
+    day = start.astimezone(TZ).date()
+    last_day = end.astimezone(TZ).date()
+    while day <= last_day:
+        lo = datetime(day.year, day.month, day.day, OPEN_HOUR, tzinfo=TZ)
+        hi = datetime(day.year, day.month, day.day, CLOSE_HOUR, tzinfo=TZ)
+        lo, hi = max(lo, start), min(hi, end)
+        if lo < hi:
+            intervals.append((lo, hi))
+        day += timedelta(days=1)
+    return intervals
+
+
+def sample_timestamps(
+    rng: Random, intervals: list[tuple[datetime, datetime]], n: int
+) -> list[datetime]:
+    """n thời điểm (làm tròn giây) phân bố đều trên tổng thời gian của các khoảng, đã sắp xếp."""
+    spans = [(lo, int((hi - lo).total_seconds())) for lo, hi in intervals]
+    total = sum(seconds for _, seconds in spans)
+    if total <= 0 or n <= 0:
+        return []
+    stamps = []
+    for _ in range(n):
+        offset = rng.randrange(total)
+        for lo, seconds in spans:
+            if offset < seconds:
+                stamps.append(lo + timedelta(seconds=offset))
+                break
+            offset -= seconds
+    return sorted(stamps)
+
+
 # ---------------------------------------------------------------- database
 class SourceRepository:
     """Lớp duy nhất của stream nói chuyện với PostgreSQL."""
@@ -219,6 +283,59 @@ class SourceRepository:
     def list_store_ids(self) -> list[int]:
         with self.session_factory() as session:
             return list(session.scalars(select(Store.id).order_by(Store.id)))
+
+    def last_sales_activity(self) -> datetime | None:
+        """Mốc muộn nhất của giao dịch (transaction_ts hoặc updated_at); None nếu chưa có."""
+        stmt = select(
+            func.max(SalesTransaction.transaction_ts), func.max(SalesTransaction.updated_at)
+        )
+        with self.session_factory() as session:
+            stamps = [t for t in session.execute(stmt).one() if t is not None]
+        return max(stamps) if stamps else None
+
+    def load_sales_context(self) -> SeedContext:
+        """Trạng thái hiện tại của danh mục, dưới dạng SeedContext để dùng lại luật bán hàng."""
+        with self.session_factory() as session:
+            store_ids = list(session.scalars(select(Store.id).order_by(Store.id)))
+            employees: dict[int, list[tuple[int, date, date | None]]] = defaultdict(list)
+            for emp_id, store_id, start, end in session.execute(
+                select(Employee.id, Employee.store_id, Employee.start_date, Employee.end_date)
+            ):
+                employees[store_id].append((emp_id, start, end))
+            methods = session.execute(select(PaymentMethod.id, PaymentMethod.method)).all()
+            prices = {
+                pid: price for pid, price in session.execute(select(Product.id, Product.unit_price))
+            }
+            promotions: dict[int, list[tuple[int, date, date]]] = defaultdict(list)
+            for pid, promo_id, start, end in session.execute(
+                select(
+                    PromotionProduct.product_id,
+                    Promotion.id,
+                    Promotion.start_date,
+                    Promotion.end_date,
+                ).join(Promotion, Promotion.id == PromotionProduct.promotion_id)
+            ):
+                promotions[pid].append((promo_id, start, end))
+        return SeedContext(
+            start=datetime.now(TZ).date(),
+            days=1,
+            store_ids=store_ids,
+            employees_by_store=dict(employees),
+            payment_method_ids=[m[0] for m in methods],
+            payment_weights=[PAYMENT_METHODS.get(m[1], 1.0) for m in methods],
+            product_prices=prices,
+            promotions_by_product=dict(promotions),
+        )
+
+    def insert_sales(self, batch: TransactionBatch) -> int:
+        """Ghi một lô giao dịch (một transaction DB), trả về số giao dịch đã ghi."""
+        if not batch.transactions:
+            return 0
+        return (
+            SeedRepository(self.session_factory)
+            .insert_transaction_batch(batch)
+            .inserted_transactions
+        )
 
     def apply_changes(
         self, events: list[ProductChangeEvent], transfers: list[EmployeeTransferEvent]
@@ -266,20 +383,31 @@ class SourceRepository:
 class StreamRunner:
     """Điều phối, không chứa luật."""
 
-    def __init__(self, repo: SourceRepository, policy: ChangePolicy, config: StreamConfig) -> None:
+    def __init__(
+        self,
+        repo: SourceRepository,
+        policy: ChangePolicy,
+        config: StreamConfig,
+        sales: TransactionGenerator | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(TZ),
+    ) -> None:
         self.repo = repo
         self.policy = policy
         self.config = config
+        self.sales = sales
+        self.clock = clock
         self.cycle = 0
 
     @classmethod
     def from_config(
         cls, config: StreamConfig, session_factory: sessionmaker[Session] = SessionLocal
     ) -> StreamRunner:
+        rnd = RandomSource(config.random_seed)
         return cls(
             SourceRepository(session_factory),
-            ChangePolicy(RandomSource(config.random_seed)),
+            ChangePolicy(rnd),
             config,
+            sales=TransactionGenerator(SeedConfig(), rnd),
         )
 
     def run_once(self) -> StreamTickResult:
@@ -288,6 +416,8 @@ class StreamRunner:
         if not products:
             raise NoProductsError("Bảng retail.product đang trống. Chạy `make seed` trước.")
 
+        # Bán trước khi đổi giá: giao dịch mới dùng giá hiện tại, giá mới có hiệu lực từ lúc này
+        sold = self._sell()
         events = self.policy.plan_changes(products, self.config)
         transfers = self.policy.plan_transfers(
             self.repo.list_active_employees(), self.repo.list_store_ids(), self.config
@@ -319,16 +449,48 @@ class StreamRunner:
             len(events),
             result.updated_products,
             result.transferred_employees,
+            sold,
         )
         logger.info(
-            "[cycle %d] scanned %d, planned %d, updated %d products, transferred %d employees",
+            "[cycle %d] scanned %d, planned %d, updated %d products, transferred %d employees, "
+            "sold %d transactions",
             tick.cycle,
             tick.scanned_products,
             tick.planned_events,
             tick.applied_events,
             tick.transferred_employees,
+            tick.inserted_transactions,
         )
         return tick
+
+    def _sell(self) -> int:
+        """INSERT giao dịch mới vào khoảng giờ mở cửa đã trôi qua kể từ giao dịch gần nhất."""
+        if self.config.sales_per_tick == 0 or self.sales is None:
+            return 0
+        now = self.clock()
+        last = self.repo.last_sales_activity() or now - timedelta(days=1)
+        stamps = sample_timestamps(
+            self.sales.rng,
+            open_intervals(last + timedelta(seconds=1), now),
+            self.config.sales_per_tick,
+        )
+        if not stamps:
+            logger.info(
+                "[cycle %d] chưa có giờ mở cửa nào kể từ giao dịch gần nhất (%s), bỏ qua bán hàng",
+                self.cycle,
+                last.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+            )
+            return 0
+        batch = self.sales.generate_at(self.repo.load_sales_context(), stamps, now)
+        sold = self.repo.insert_sales(batch)
+        logger.info(
+            "[cycle %d] sold %d transactions (%s -> %s)",
+            self.cycle,
+            sold,
+            stamps[0].astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+            stamps[-1].astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
+        )
+        return sold
 
     def run_forever(self) -> None:
         """Lặp đến khi Ctrl+C. Mỗi tick đã commit thì giữ nguyên, tick dở dang thì rollback."""
@@ -345,7 +507,8 @@ def parse_args(argv: list[str] | None = None) -> tuple[StreamConfig, bool]:
     d = StreamConfig()
     parser = argparse.ArgumentParser(
         description=(
-            "Mô phỏng đổi giá vốn (thường xuyên), giá bán (hiếm) và chuyển cửa hàng của employee. "
+            "Mô phỏng đổi giá vốn (thường xuyên), giá bán (hiếm), chuyển cửa hàng của employee "
+            "và (tùy chọn) bán thêm hàng. "
             "Mặc định chạy 1 cycle rồi thoát."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -374,6 +537,15 @@ def parse_args(argv: list[str] | None = None) -> tuple[StreamConfig, bool]:
         default=d.employees_per_tick,
         help="Số employee chuyển cửa hàng mỗi cycle, 0 = tắt",
     )
+    parser.add_argument(
+        "--sales",
+        type=int,
+        default=d.sales_per_tick,
+        help=(
+            "Số giao dịch bán hàng mới INSERT mỗi cycle (0 = tắt), rải đều trong giờ mở cửa "
+            "kể từ giao dịch gần nhất đến bây giờ"
+        ),
+    )
     parser.add_argument("--loop", action="store_true", help="Chạy liên tục đến khi Ctrl+C")
     parser.add_argument(
         "--interval", type=float, default=d.interval_seconds, help="Số giây giữa 2 cycle (--loop)"
@@ -389,6 +561,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[StreamConfig, bool]:
             price_change_pct_min=args.price_pct_min,
             price_change_pct_max=args.price_pct_max,
             employees_per_tick=args.transfers,
+            sales_per_tick=args.sales,
             interval_seconds=args.interval,
             random_seed=args.seed,
         )

@@ -1,14 +1,16 @@
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
 
-from retail_pulse.generator.common import RandomSource
+from retail_pulse.generator.common import TZ, RandomSource
 from retail_pulse.generator.seed import SeedConfig, SeedCoordinator
 from retail_pulse.generator.stream import (
+    CLOSE_HOUR,
+    OPEN_HOUR,
     REASON_COST,
     REASON_PRICE,
     ChangePolicy,
@@ -18,7 +20,9 @@ from retail_pulse.generator.stream import (
     SourceRepository,
     StreamConfig,
     StreamRunner,
+    open_intervals,
     parse_args,
+    sample_timestamps,
     shift_by_pct,
 )
 
@@ -148,6 +152,45 @@ def test_parse_args_rejects_invalid_values(argv):
     with pytest.raises(SystemExit) as exc:
         parse_args(argv)
     assert exc.value.code == 2
+
+
+def at(day: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 3, day, hour, minute, tzinfo=TZ)
+
+
+def test_open_intervals_keep_only_opening_hours():
+    # 20:00 ngày 10 đến 09:00 ngày 11: chỉ còn 20–22h hôm trước và 7–9h hôm sau
+    assert open_intervals(at(10, 20), at(11, 9)) == [
+        (at(10, 20), at(10, 22)),
+        (at(11, 7), at(11, 9)),
+    ]
+
+
+def test_open_intervals_empty_when_store_is_closed():
+    assert open_intervals(at(10, 22, 30), at(11, 6)) == []
+    assert open_intervals(at(10, 12), at(10, 12)) == []
+
+
+def test_sample_timestamps_stay_inside_intervals_sorted_and_deterministic():
+    intervals = open_intervals(at(10, 20), at(12, 9))
+    first = sample_timestamps(RandomSource(5).random, intervals, 200)
+    assert first == sample_timestamps(RandomSource(5).random, intervals, 200)
+    assert first == sorted(first) and len(first) == 200
+    assert all(any(lo <= ts <= hi for lo, hi in intervals) for ts in first)
+    assert all(7 <= ts.astimezone(TZ).hour < 22 for ts in first)
+
+
+def test_sample_timestamps_returns_nothing_without_open_time():
+    assert sample_timestamps(RandomSource(1).random, [], 10) == []
+    assert sample_timestamps(RandomSource(1).random, open_intervals(at(10, 8), at(10, 9)), 0) == []
+
+
+def test_sales_option_is_validated_and_off_by_default():
+    assert StreamConfig().sales_per_tick == 0
+    with pytest.raises(ValueError):
+        StreamConfig(sales_per_tick=-1)
+    assert parse_args([])[0].sales_per_tick == 0
+    assert parse_args(["--sales", "30"])[0].sales_per_tick == 30
 
 
 # ---------------------------------------------------------------- integration (PostgreSQL)
@@ -280,3 +323,63 @@ def test_run_once_transfers_employees_to_another_store(seeded, session_factory):
     moved = [i for i in before if before[i][1] != after[i][1]]
     assert tick.transferred_employees == len(moved) == 2
     assert all(after[i][2] > before[i][2] for i in moved)  # trigger cập nhật updated_at
+
+
+def count_sales(session_factory) -> tuple[int, int]:
+    with session_factory() as session:
+        return (
+            session.execute(text("SELECT count(*) FROM retail.sales_transaction")).scalar_one(),
+            session.execute(
+                text("SELECT count(*) FROM retail.sales_transaction_item")
+            ).scalar_one(),
+        )
+
+
+def test_run_once_without_sales_option_does_not_insert_transactions(seeded, session_factory):
+    before = count_sales(session_factory)
+    tick = make_runner(session_factory).run_once()
+    assert tick.inserted_transactions == 0
+    assert count_sales(session_factory) == before
+
+
+def test_run_once_with_sales_inserts_new_transactions_in_opening_hours(seeded, session_factory):
+    repo = SourceRepository(session_factory)
+    anchor = repo.last_sales_activity()
+    before_tx, before_items = count_sales(session_factory)
+    runner = make_runner(session_factory, sales_per_tick=40)
+    runner.clock = lambda: datetime.now(TZ) + timedelta(days=2)  # đủ giờ mở cửa sau lần seed
+
+    tick = runner.run_once()
+
+    assert tick.inserted_transactions == 40
+    after_tx, after_items = count_sales(session_factory)
+    assert after_tx == before_tx + 40 and after_items > before_items
+    with session_factory() as session:
+        rows = session.execute(
+            text(
+                "SELECT transaction_ts, created_at, updated_at, status "
+                "FROM retail.sales_transaction ORDER BY transaction_id DESC LIMIT 40"
+            )
+        ).all()
+        # Mỗi giao dịch có ít nhất một dòng; regular_price là giá hiện tại của product
+        orphans = session.execute(
+            text(
+                "SELECT count(*) FROM retail.sales_transaction t WHERE NOT EXISTS "
+                "(SELECT 1 FROM retail.sales_transaction_item i "
+                "WHERE i.transaction_id = t.transaction_id)"
+            )
+        ).scalar_one()
+    assert orphans == 0
+    for ts, created, updated, _status in rows:
+        assert ts > anchor and created == ts and updated >= ts
+        assert OPEN_HOUR <= ts.astimezone(TZ).hour < CLOSE_HOUR
+
+
+def test_sales_are_skipped_when_no_opening_hours_have_passed(seeded, session_factory):
+    anchor = SourceRepository(session_factory).last_sales_activity()
+    before = count_sales(session_factory)
+    runner = make_runner(session_factory, sales_per_tick=10)
+    runner.clock = lambda: anchor + timedelta(seconds=1)  # chưa có thời gian trôi qua
+
+    assert runner.run_once().inserted_transactions == 0
+    assert count_sales(session_factory) == before
