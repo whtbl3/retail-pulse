@@ -11,7 +11,7 @@ khai còn TBD.
 | 1 | Asset dlt: mỗi bảng RAW là một asset | Xong (đã Materialize trong giao diện) |
 | 2 | Asset dbt: mỗi model dbt là một asset (`@dbt_assets`) | Xong (đã chạy `dbt build` qua Dagster, test đều pass) |
 | 3 | Nối lineage: bảng RAW của dlt chính là source của dbt | Xong (kiểm chứng trên đồ thị asset) |
-| 4 | Job chạy toàn chuỗi và job `--full-refresh` cho `fct_sales` | Chưa |
+| 4 | Job chạy toàn chuỗi và job `--full-refresh` cho `fct_sales` | Xong (đã chạy thử job full-refresh) |
 | 5 | Lịch chạy | Chưa |
 
 ## Khái niệm
@@ -219,4 +219,77 @@ Gợi ý cải thiện (chưa làm): 20 asset dbt đang nằm chung nhóm `defau
 (`staging`, `intermediate`, `marts`) bằng cách ghi đè `get_group_name` của `DagsterDbtTranslator`, để
 giao diện dễ đọc hơn.
 
-> Các bước 4 đến 5 sẽ được ghi vào file này khi hoàn thành.
+## Bước 4 — Job
+
+File: `src/retail_pulse/orchestration/jobs.py`, đăng ký trong `definitions.py` (`jobs=[...]`).
+
+**Job là gì:** một nhóm asset được đặt tên để chạy cùng lúc, Dagster tự xếp thứ tự theo phụ thuộc. Trước
+đây phải chọn tay các asset rồi Materialize; job gói thao tác đó lại thành **một nút bấm**. Job
+chưa có lịch (bước 5).
+
+| Job | Chọn asset | Dùng khi |
+|---|---|---|
+| `full_pipeline` | `retail_raw_assets` (dlt) và `retail_dbt_assets` (dbt) | Chạy thường kỳ: dlt nạp RAW, rồi `dbt build` toàn bộ (model và test) |
+| `fct_sales_full_refresh` | chỉ `marts/fct_sales`, kèm tag `full_refresh=true` | Sửa dòng khóa `-2` của fact; không chạy dlt, không đụng RAW |
+
+```python
+full_pipeline_job = define_asset_job(
+    "full_pipeline", selection=AssetSelection.assets(retail_raw_assets, retail_dbt_assets))
+fct_sales_full_refresh_job = define_asset_job(
+    "fct_sales_full_refresh",
+    selection=AssetSelection.assets(AssetKey(["marts", "fct_sales"])),
+    tags={"full_refresh": "true"})
+```
+
+**Làm sao một asset dbt biết phải `--full-refresh`:** hai job dùng chung asset dbt, chỉ khác tag của
+lần chạy. Asset đọc tag đó (`dbt_assets.py`):
+
+```python
+args = ["build"]
+if context.run.tags.get("full_refresh") == "true":
+    args.append("--full-refresh")
+yield from dbt.cli(args, context=context).stream()
+```
+Dagster tự thêm `--select` theo các asset được chọn, nên job full-refresh chạy
+`dbt build --full-refresh --select retail_pulse.marts.fct_sales` (mình đã chạy thử, log đúng như vậy,
+26/26 test pass, `fct_sales` vẫn 271.766 dòng). Dùng một asset với hai kiểu chạy khác nhau, thay vì hai
+asset trùng khóa, vì Dagster không cho hai asset cùng khóa.
+
+**Chạy:**
+- Giao diện: `make dagster`, mục **Jobs**, chọn job, **Launchpad**, **Launch Run**.
+- Dòng lệnh, không cần mở giao diện:
+  `uv run dagster job execute -m retail_pulse.orchestration.definitions -j full_pipeline`
+  (đặt `DAGSTER_HOME` nếu muốn giữ lịch sử chạy).
+
+**Lưu ý an toàn:** đặt nhầm tag `full_refresh=true` cho job `full_pipeline` thì mọi model dbt chạy với
+`--full-refresh` (bảng dbt bị dựng lại, vô hại, nhưng chậm hơn). RAW thì không bao giờ bị ghi đè bởi
+cờ này vì nó chỉ ảnh hưởng dbt.
+
+Kiểm thử: `tests/test_orchestration.py` kiểm tra hai job tồn tại, `full_pipeline` chứa `raw/product` và
+`marts/fct_sales`, job full-refresh chỉ chọn `fct_sales` và mang tag đúng.
+
+## Bước 5 — Lịch chạy (schedule)
+
+Schedule = "đến giờ thì tự launch một job". Định nghĩa trong `jobs.py`, đăng ký bằng `schedules=[...]` ở `definitions.py`.
+
+| Quyết định | Chọn | Lý do |
+|---|---|---|
+| Job được lên lịch | `full_pipeline` | dlt nạp RAW rồi dbt build |
+| Tần suất | Mỗi ngày 23:00, múi giờ `Asia/Ho_Chi_Minh` | Cửa hàng mở 7h–22h, chạy sau giờ đóng cửa thì đã đủ đơn cả ngày; dashboard xem theo ngày không cần mới hơn |
+| `fct_sales_full_refresh` | Không lên lịch, chạy tay | Chỉ cần khi có dòng khóa `-2` (dữ liệu đến trễ); dựng lại cả bảng tốn tài nguyên |
+| dlt lỗi thì sao | Không build dbt | Mặc định của Dagster, không cần cấu hình thêm |
+
+**Vì sao dlt lỗi thì dbt không chạy mà không cần code gì:** trong cùng một run, asset dbt phụ thuộc asset dlt
+(lineage bước 3). Asset upstream fail thì mọi asset downstream bị bỏ qua (skipped). Đây cũng là
+best practice: build trên RAW không đầy đủ sẽ cho số liệu sai mà vẫn "xanh". Ngược lại nếu dlt xong mà dbt
+fail, RAW đã có dữ liệu mới, lần sau chạy lại chỉ cần dbt (chọn asset dbt trong UI).
+
+**Chạy được cần gì:** lịch chỉ chạy khi **daemon** chạy. `make dagster` (`dagster dev`) bật sẵn daemon, nên
+máy phải mở và tiến trình còn sống lúc 23:00. Đặt `DAGSTER_HOME` ra thư mục cố định để lịch sử run và
+trạng thái lịch không mất khi khởi động lại; nếu không, mỗi lần dùng thư mục tạm. Production thật dùng
+`dagster-daemon run` chạy nền (systemd/Docker), không dùng `dagster dev`.
+
+**Xem/bật tắt:** giao diện, mục **Automation**; lịch đặt `default_status=RUNNING` nên tự bật. Thử ngay không
+đợi 23:00: vào lịch, **Test Schedule** hoặc launch job `full_pipeline` bằng tay.
+
+Kiểm thử: `test_daily_schedule_targets_full_pipeline` kiểm tra cron và múi giờ.
