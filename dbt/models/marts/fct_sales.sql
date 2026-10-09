@@ -74,11 +74,25 @@ local_ts as (
         -- Chỉ khóa ngày/giờ dùng giờ địa phương; transaction_ts gốc giữ nguyên
         convert_timezone('{{ var("local_tz") }}', transaction_ts) as local_transaction_ts
     from measures
+),
+
+-- Khóa ngày/giờ tính từ giờ địa phương rồi tra lại dim_date, dim_time như các dimension khác,
+-- nên ngày/giờ không có trong dimension rơi về -2 (không làm fail test relationships)
+timed as (
+    select
+        l.*,
+        d.date_key as dim_date_key,
+        t.time_key as dim_time_key
+    from local_ts l
+    left join {{ ref('dim_date') }} d
+        on d.date_key = to_number(to_char(l.local_transaction_ts::date, 'YYYYMMDD'))
+    left join {{ ref('dim_time') }} t
+        on t.time_key = hour(l.local_transaction_ts) * 100 + minute(l.local_transaction_ts)
 )
 
 select
-    to_number(to_char(local_transaction_ts::date, 'YYYYMMDD'))        as date_key,
-    hour(local_transaction_ts) * 100 + minute(local_transaction_ts)   as time_key,
+    coalesce(dim_date_key, -2)                                        as date_key,
+    coalesce(dim_time_key, -2)                                        as time_key,
     coalesce(product_key, -2)                                         as product_key,
     coalesce(store_key, -2)                                           as store_key,
     coalesce(employee_key, -2)                                        as employee_key,
@@ -100,4 +114,4 @@ select
     quantity * unit_cost                                                   as cost_amount,
     gross_amount - discount_amount - coupon_amount - quantity * unit_cost  as gross_profit,
     source_updated_at
-from local_ts
+from timed

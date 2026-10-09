@@ -28,6 +28,16 @@ FULL_REFRESH: list[str] = [
 ]
 
 
+def retail_pipeline(progress: str | None = None) -> dlt.Pipeline:
+    """Một nơi duy nhất định nghĩa pipeline, dùng chung cho CLI và Dagster"""
+    return dlt.pipeline(
+        pipeline_name="retail_oltp_to_snowflake",
+        destination="snowflake",
+        dataset_name="raw",
+        progress=progress,
+    )
+
+
 def retail_source():
     source = sql_database(
         credentials=engine,  # dùng lại engine của oltp/db.py
@@ -35,6 +45,7 @@ def retail_source():
         table_names=[*APPEND, *FULL_REFRESH],
         backend="sqlalchemy",
         reflection_level="full",  # giữ đúng precision/scale của NUMERIC(12,2)
+        defer_table_reflect=True,  # chỉ đọc cấu trúc bảng lúc chạy, để import không cần Postgres
     )
     for table, pk in APPEND.items():
         source.resources[table].apply_hints(
@@ -50,15 +61,10 @@ def retail_source():
 def main() -> None:
     argparse.ArgumentParser(description="Load Postgres OLTP vào Snowflake RAW").parse_args()
 
-    pipeline = dlt.pipeline(
-        pipeline_name="retail_oltp_to_snowflake",
-        destination="snowflake",
-        dataset_name="raw",
-        progress="log",
-    )
+    pipeline = retail_pipeline(progress="log")
     info = pipeline.run(retail_source())
     print(info)
-    print(pipeline.last_trace.last_normalize_info)  # số dòng theo từng bảng
+    print(pipeline.last_trace.last_normalize_info)
 
 
 if __name__ == "__main__":

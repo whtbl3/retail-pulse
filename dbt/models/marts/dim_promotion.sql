@@ -3,11 +3,11 @@ SELECT
     promotion_id,
     CASE type
       WHEN 'percentage' THEN
-          'Giảm ' || IFF(amount = TRUNC(amount),
-                        TO_VARCHAR(TRUNC(amount)),
-                        TO_VARCHAR(amount)) || '%'
+          IFF(amount = TRUNC(amount),
+              TO_VARCHAR(TRUNC(amount)),
+              TO_VARCHAR(amount)) || '% off'
       WHEN 'fixed_amount' THEN
-              'Giảm ' || TO_VARCHAR(amount, 'FM999,999,999') || ' đ'
+          TO_VARCHAR(amount, 'FM999,999,999') || ' VND off'
     END AS promotion_label,
     type   AS promotion_type,
     amount AS promotion_amount,

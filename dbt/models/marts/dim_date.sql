@@ -11,12 +11,15 @@ SELECT
     YEAR(full_date)         AS year,
     QUARTER(full_date)      AS quarter,
     MONTH(full_date)        AS month,
-    'Tháng ' || MONTH(full_date) AS month_name,
+    DECODE(MONTH(full_date),
+           1, 'January', 2, 'February', 3, 'March', 4, 'April', 5, 'May', 6, 'June',
+           7, 'July', 8, 'August', 9, 'September', 10, 'October', 11, 'November', 12, 'December'
+          )                    AS month_name,
     DAY(full_date)          AS day_of_month,
-    DAYOFWEEKISO(full_date) AS day_of_week,    -- 1 = Thứ Hai ... 7 = Chủ Nhật
+    DAYOFWEEKISO(full_date) AS day_of_week,    -- 1 = Monday ... 7 = Sunday
     DECODE(DAYOFWEEKISO(full_date),
-           1, 'Thứ Hai', 2, 'Thứ Ba', 3, 'Thứ Tư', 4, 'Thứ Năm',
-           5, 'Thứ Sáu', 6, 'Thứ Bảy', 7, 'Chủ Nhật') AS day_name,
+           1, 'Monday', 2, 'Tuesday', 3, 'Wednesday', 4, 'Thursday',
+           5, 'Friday', 6, 'Saturday', 7, 'Sunday') AS day_name,
     WEEKISO(full_date)      AS week_of_year,
     DAYOFWEEKISO(full_date) IN (6, 7) AS is_weekend
 FROM days
