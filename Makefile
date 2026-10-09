@@ -2,11 +2,12 @@
 COMPOSE := docker compose --env-file .env -f infras/docker-compose.yml
 DAYS ?= 365
 ROWS ?= 100000
+SALES ?= 300
 DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt chạy từ dbt/, nạp .env trước vì profiles.yml dùng env_var(); dùng dbt trong .venv (qua uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-loop test lint dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs dagster clean
+.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs dagster clean
 
 help: ## Liệt kê các lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -44,6 +45,9 @@ reseed: up clean-raw ## Xóa dữ liệu cũ (Postgres + RAW Snowflake) rồi se
 
 stream: up ## Đổi giá vốn/giá bán của vài product (1 cycle)
 	uv run stream
+
+stream-sales: up ## Như stream, thêm SALES (300) giao dịch bán mới rải trong giờ mở cửa kể từ giao dịch gần nhất
+	uv run stream --sales $(SALES)
 
 stream-loop: up ## Chạy stream liên tục đến khi Ctrl+C
 	uv run stream --loop

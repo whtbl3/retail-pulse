@@ -32,3 +32,7 @@ profiles.yml
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
+
+# dagster
+.tmp_dagster_home_*/
+.dagster_home/
