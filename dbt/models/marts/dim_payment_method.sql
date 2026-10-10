@@ -1,3 +1,4 @@
+-- Thử slim CI: sửa nhỏ để dbt thấy model này đã đổi (state:modified).
 SELECT
     {{ surrogate_key(['payment_method_id']) }} AS payment_method_key,
     payment_method_id,
