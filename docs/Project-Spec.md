@@ -65,7 +65,7 @@ version, and the main pipeline behaviors are covered by focused tests and docume
 | Transformation | dbt Core with dbt-snowflake | Owns warehouse transformation and SCD logic |
 | Orchestration | Dagster | Integrates dlt and dbt assets |
 | BI | Preset | Reads analytics-ready mart models |
-| Optional data quality | Great Expectations | Deferred until a later phase |
+| Optional data quality | Great Expectations | RAW checks before dbt (phase 8) |
 
 Replacing a finalized technology is out of scope unless the project owner explicitly requests it.
 
@@ -433,7 +433,7 @@ At minimum, tests should cover:
 - valid and non-overlapping SCD2 intervals per business key; and
 - fact-to-dimension referential integrity.
 
-dbt tests are required for transformed models. Great Expectations is optional and deferred.
+dbt tests are required for transformed models. Great Expectations is optional and validates RAW before dbt runs (phase 8).
 
 ### 13.4 Security and Cost Control
 
@@ -453,7 +453,7 @@ dbt tests are required for transformed models. Great Expectations is optional an
 | 5 | dbt project, sources, staging, SCD2 models, and marts | Pending |
 | 6 | Dagster asset orchestration | Pending |
 | 7 | Preset dashboards | Pending |
-| 8 | Great Expectations extension | Optional / deferred |
+| 8 | Great Expectations extension | Done (RAW checks, blocking asset checks in Dagster) |
 
 ## 15. Repository Contracts
 
