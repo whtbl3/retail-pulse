@@ -59,6 +59,67 @@ mở một PR thử có sửa một model để xem slim CI chạy.
 
 `.snowflake/` đã nằm trong `.gitignore`; dán xong vào GitHub thì giữ file ở máy hoặc xóa đều được.
 
+## Quy trình làm việc: mọi thay đổi đi qua pull request
+
+Có CI rồi thì phải bắt mọi thay đổi đi qua nó. Nếu vẫn push thẳng lên `main`, CI chỉ còn là đồ trang trí: nó
+chạy sau khi lỗi đã nằm trong bản thật. Dự án theo **trunk-based development**: chỉ có một nhánh chính là
+`main`; mỗi việc làm trên một nhánh ngắn (sống vài giờ đến vài ngày), mở PR nhỏ, CI xanh thì merge, không có
+nhánh `develop` hay `release`.
+
+### Việc hằng ngày
+```bash
+git switch main && git pull          # bắt đầu từ bản mới nhất
+git switch -c fix/ten-ngan           # một việc, một nhánh
+# sửa code, rồi:
+git add -A && git commit -m "..."
+git push -u origin fix/ten-ngan      # git in ra link để mở PR
+```
+Mở link, bấm **Create pull request**, đợi `lint` và `dbt-slim-ci` xanh, bấm **Squash and merge**. Nhánh tự xóa.
+
+- *Vì sao nhánh ngắn:* nhánh sống càng lâu thì càng lệch khỏi `main`, lúc merge càng dễ xung đột và càng khó biết
+  lỗi do ai. Bỏ qua thì PR to dần, khó review, CI chậm và dễ hỏng vì lý do không liên quan.
+- *Vì sao squash:* mỗi PR thành đúng một commit trên `main`, lịch sử đọc như một danh sách việc đã xong. Bỏ qua thì
+  `main` đầy commit "sửa lỗi chính tả", "thử lại" khiến khó truy ra thay đổi nào gây lỗi.
+
+### Cài đặt GitHub (làm một lần, trên giao diện web)
+
+**A. Settings, General, mục Pull Requests**
+
+| Làm gì | Vì sao | Nếu bỏ qua |
+|---|---|---|
+| Chỉ bật **Allow squash merging** (tắt merge commit và rebase), chọn "Default to pull request title" | Mỗi PR thành một commit gọn | Lịch sử lẫn lộn ba kiểu merge, khó đọc |
+| Bật **Automatically delete head branches** | Merge xong GitHub tự xóa nhánh | Nhánh cũ chất đống, mỗi lần chọn nhánh phải lọc qua rác |
+
+**B. Settings, Actions, General** (quan trọng vì repo public)
+
+| Làm gì | Vì sao | Nếu bỏ qua |
+|---|---|---|
+| **Require approval for all external contributors** | Repo public thì ai cũng fork và mở PR được; bước này bắt họ chờ bạn duyệt trước khi workflow chạy | Người lạ có thể kích hoạt workflow, tốn phút chạy Actions và thử lách vào quy trình của bạn |
+| **Workflow permissions: Read repository contents** | Workflow chỉ được đọc code, không được ghi | Một workflow bị lợi dụng có thể sửa code hoặc tạo release |
+| Để trống ô "Allow GitHub Actions to create and approve pull requests" | Không cho bot tự duyệt PR | Một workflow có thể tự tạo và tự duyệt PR, phá vòng kiểm soát |
+
+Secret `CI_PRIVATE_KEY` và `SNOWFLAKE_ACCOUNT` không được truyền cho PR từ fork. Đây là chủ ý: nếu truyền, người
+ngoài chỉ cần sửa workflow trong fork để in key ra log.
+
+**C. Settings, Rules, Rulesets: tạo `protect-main` (Active, bypass để trống, áp cho default branch)**
+
+| Rule | Vì sao | Nếu bỏ qua |
+|---|---|---|
+| **Restrict deletions** | Không ai xóa nhầm `main` | Một lệnh sai là mất nhánh chính |
+| **Block force pushes** | Không ai ghi đè lịch sử `main` | Commit đã merge có thể biến mất, ảnh hưởng cả manifest dùng để so sánh |
+| **Require a pull request before merging** (approvals = 0) | Mọi thay đổi bắt buộc qua PR, ngay cả của chủ repo | Vẫn push thẳng lên `main` được, CI không có tác dụng. Approvals để 0 vì dự án một người không có ai duyệt; nhóm nhiều người thì đặt 1 |
+| **Require status checks to pass** với hai check `lint` và `dbt-slim-ci` | Biến CI từ "tham khảo" thành "cổng chặn": đỏ thì không merge được | CI đỏ vẫn merge được, lỗi vào thẳng bản thật |
+| **Bypass list để trống** | Chủ repo cũng phải đi qua PR | Có đường tắt thì sớm muộn bị dùng "cho nhanh" lúc vội, đúng lúc dễ sai nhất |
+
+Hai check phải đã chạy ít nhất một lần gần đây thì mới tìm thấy trong ô **Add checks**. Tên check lấy từ tên job
+trong `ci.yml` (`lint`, `dbt-slim-ci`); `ci.yml` không có bộ lọc `paths` nên hai check này luôn chạy trên mọi PR. Nếu
+có bộ lọc, PR không đụng đường dẫn đó sẽ không có check, và GitHub chờ mãi vì tưởng nó chưa xong.
+
+### Khi nào KHÔNG cần theo đúng như vậy
+- Dự án một người không cần người duyệt (approvals = 0), nhưng vẫn nên đi qua PR để CI chạy.
+- Đừng dùng GitFlow (`develop`, `release`, `hotfix`) cho dự án dữ liệu này: nặng nề, chỉ hợp khi phát hành phiên
+  bản theo chu kỳ.
+
 ## Lưu ý
 - **Manifest lệch bản thật:** manifest được sinh khi merge vào `main`, trong khi dữ liệu thật do Dagster build
   trên máy bạn. Nếu merge xong mà chưa chạy `full_pipeline`, PR kế tiếp so với code mới nhưng `--defer` đọc
