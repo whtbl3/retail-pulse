@@ -1,0 +1,15 @@
+# Sao chép nội dung này vào ~/.dbt/profiles.yml (nằm NGOÀI repo).
+# Chỉ tham chiếu biến môi trường (xem .env.example), không ghi mật khẩu hay key vào file.
+retail_pulse:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: DBT_TRANSFORMER
+      role: TRANSFORMER
+      private_key_path: "{{ env_var('DBT_PRIVATE_KEY_PATH') }}"
+      database: RETAIL_PULSE
+      warehouse: RETAIL_WH
+      schema: DBT_DEV
+      threads: 4
