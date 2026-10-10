@@ -62,6 +62,10 @@ extend-exclude = ["*.md"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.isort]
+# Khai báo rõ để ruff không đoán theo thư mục: nếu có thư mục dlt/ ở gốc repo, ruff sẽ coi `dlt` là mã của dự án
+known-third-party = ["dlt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

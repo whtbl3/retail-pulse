@@ -14,9 +14,9 @@ wheels/
 
 # configuration datasource
 .env
-.env
-.dlt
-.dlt/secrets.toml
+# .dlt chứa credential thật; chỉ file mẫu được commit
+.dlt/*
+!.dlt/secrets.toml.example
 *.p8
 *.pem
 .snowflake
