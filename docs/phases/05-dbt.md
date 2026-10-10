@@ -1,16 +1,6 @@
 # Phase 5 — dbt (Snowflake RAW → staging → intermediate → marts)
 
-Mục tiêu: biến dữ liệu RAW do dlt nạp thành star schema phân tích doanh số. Tiến độ theo lộ trình
-trong `.claude/CLAUDE.md`; file này ghi lại từng bước đã làm.
-
-| Bước | Nội dung | Trạng thái |
-|---|---|---|
-| 1 | Kết nối Snowflake, `dbt debug` pass | Xong |
-| 2 | Khai báo sources | Xong |
-| 3 | Staging + test | Xong |
-| 4 | Intermediate: SCD2 product, employee | Xong |
-| 5 | Marts: dimension, `fct_sales` incremental | Xong |
-| 6 | Lineage, review | Xong |
+Mục tiêu: biến dữ liệu RAW do dlt nạp thành star schema phân tích doanh số. File này ghi lại từng bước.
 
 ## Bước 1 — Kết nối và `dbt debug`
 

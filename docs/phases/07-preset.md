@@ -4,14 +4,6 @@ Mục tiêu: Preset đọc các bảng mart trong Snowflake và hiện dashboard
 [Project-Spec, mục 12](../Project-Spec.md#12-bi-specification): Preset chỉ đọc mart dbt, không đọc
 PostgreSQL hay RAW. Bố cục, chỉ số và bộ lọc chi tiết còn TBD, sẽ chốt khi dựng chart.
 
-| Bước | Nội dung | Trạng thái |
-|---|---|---|
-| 1 | Role `REPORTER` chỉ đọc schema `MARTS` + user riêng cho Preset | Xong (mật khẩu `PRESET_READER_PASSWORD` trong `.env`) |
-| 2 | Tạo tài khoản và workspace Preset | Xong |
-| 3 | Kết nối Snowflake từ Preset | Xong (qua SQLAlchemy URI) |
-| 4 | Khai báo dataset từ các bảng mart | Xong (`sales_enriched`) |
-| 5 | Dựng chart và dashboard | Xong (dashboard `RetailPulse Sales Overview`, 5 chart, 2 bộ lọc) |
-
 ## Bước 1 — Role chỉ đọc cho Preset
 
 Vì sao tạo role riêng: Preset chỉ cần đọc. Dùng `TRANSFORMER` thì lộ quyền ghi/xóa cả RAW lẫn mart cho

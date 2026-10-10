@@ -167,16 +167,18 @@ Hình dưới là cùng pipeline nhìn theo công cụ: dữ liệu đi từ tr�
 
 > Ảnh vẽ từ bản thiết kế ban đầu nên khác thực tế ở ba điểm: CI hiện chỉ có `ruff` và slim CI (chưa có `sqlfluff`, chưa tự deploy); dbt không dùng snapshot (SCD2 tự xây bằng window function); Great Expectations chưa có trong ảnh.
 
-| Công cụ | Vai trò | Trạng thái |
-| --- | --- | --- |
-| Python generator (SQLAlchemy, Faker) | Seed dữ liệu lịch sử, mô phỏng đổi giá, đổi cửa hàng nhân viên và bán hàng mới | Xong |
-| PostgreSQL 16 (Docker Compose) | CSDL nguồn OLTP, 3NF | Xong |
-| dlt | Nạp incremental từ PostgreSQL vào Snowflake RAW | Xong |
-| Snowflake | Các tầng RAW, staging, intermediate, marts | Xong |
-| dbt Core | Staging, intermediate, marts, dimension SCD2, test | Xong |
-| Dagster | Điều phối dlt, dbt và kiểm tra chất lượng thành asset, job, lịch chạy hằng ngày | Xong |
-| Preset | Dashboard BI trên marts | Xong |
-| Great Expectations | Kiểm tra chất lượng dữ liệu RAW | Xong |
-| GitHub Actions | Lint `ruff`, slim CI cho dbt, bảo vệ nhánh `main` | Xong (chưa có CD, `sqlfluff`, `pytest`) |
+| Công cụ | Vai trò |
+| --- | --- |
+| Python generator (SQLAlchemy, Faker) | Seed dữ liệu lịch sử, mô phỏng đổi giá, đổi cửa hàng nhân viên và bán hàng mới |
+| PostgreSQL 16 (Docker Compose) | CSDL nguồn OLTP, 3NF |
+| dlt | Nạp incremental từ PostgreSQL vào Snowflake RAW |
+| Snowflake | Các tầng RAW, staging, intermediate, marts |
+| dbt Core | Staging, intermediate, marts, dimension SCD2, test |
+| Dagster | Điều phối dlt, dbt và kiểm tra chất lượng thành asset, job, lịch chạy hằng ngày |
+| Preset | Dashboard BI trên marts |
+| Great Expectations | Kiểm tra chất lượng dữ liệu RAW |
+| GitHub Actions | Lint `ruff`, slim CI cho dbt, bảo vệ nhánh `main` |
+
+CI hiện chỉ có `ruff` và slim CI cho dbt; chưa có CD, `sqlfluff` và `pytest`.
 
 Muốn chạy thử? Bắt đầu từ [docs/README.md](./docs/README.md): có lộ trình theo phase và các lệnh chạy nhanh.

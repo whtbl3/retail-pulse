@@ -3,16 +3,7 @@
 Mục tiêu: Dagster chạy cả chuỗi PostgreSQL → dlt → Snowflake RAW → dbt (staging, SCD2, marts, test) và
 cho xem trạng thái chạy, lineage, metadata của từng asset. Phạm vi theo
 [Project-Spec, mục 11](../Project-Spec.md#11-orchestration-specification): chạy dlt, rồi dbt models,
-rồi dbt tests, rồi hiện trạng thái qua Dagster. Lịch chạy, thử lại, cảnh báo, sensor và cách triển
-khai còn TBD.
-
-| Bước | Nội dung | Trạng thái |
-|---|---|---|
-| 1 | Asset dlt: mỗi bảng RAW là một asset | Xong (đã Materialize trong giao diện) |
-| 2 | Asset dbt: mỗi model dbt là một asset (`@dbt_assets`) | Xong (đã chạy `dbt build` qua Dagster, test đều pass) |
-| 3 | Nối lineage: bảng RAW của dlt chính là source của dbt | Xong (kiểm chứng trên đồ thị asset) |
-| 4 | Job chạy toàn chuỗi và job `--full-refresh` cho `fct_sales` | Xong (đã chạy thử job full-refresh) |
-| 5 | Lịch chạy | Xong (23:00 hằng ngày cho `full_pipeline`) |
+rồi dbt tests, rồi hiện trạng thái qua Dagster. Chưa làm: thử lại, cảnh báo, sensor và cách triển khai.
 
 ## Khái niệm
 - **Asset**: một thứ dữ liệu được tạo ra (bảng RAW, model dbt), có phụ thuộc vào asset khác. Tương
