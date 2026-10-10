@@ -42,9 +42,11 @@ key chưa gắn và dlt không đăng nhập được.
 
 ## 2. Cấu hình credential cho dlt
 
-Sao chép file mẫu `dlt/secrets.toml` thành `.dlt/secrets.toml` (file thật, **không commit**) rồi điền: `host` (account
-Snowflake), `database = "RETAIL_PULSE"`, `username = "DLT_LOADER"`, `warehouse = "RETAIL_WH"`, `role = "LOADER"` và
-`private_key` (key của `DLT_LOADER`).
+```bash
+cp .dlt/secrets.toml.example .dlt/secrets.toml   # file thật, KHÔNG commit
+```
+Rồi điền `host` (account Snowflake) và `private_key` (key của `DLT_LOADER`); các trường còn lại
+(`database = "RETAIL_PULSE"`, `username = "DLT_LOADER"`, `warehouse = "RETAIL_WH"`, `role = "LOADER"`) đã đúng sẵn trong file mẫu.
 
 *Về định dạng `private_key`:* dlt nhận chuỗi base64 của key, hoặc dùng `private_key_path` trỏ tới file PEM; xem
 [tài liệu dlt cho Snowflake](https://dlthub.com/docs/dlt-ecosystem/destinations/snowflake).
