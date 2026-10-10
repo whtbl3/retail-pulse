@@ -1,102 +1,96 @@
 # Phase 3 — Ingestion PostgreSQL → Snowflake RAW (dlt)
 
-Mục tiêu: đưa dữ liệu OLTP sang Snowflake, lần đầu full load, các lần sau incremental.
+Mục tiêu: đưa dữ liệu OLTP sang Snowflake; lần đầu nạp toàn bộ, các lần sau chỉ nạp phần mới.
 
-| Bảng | Cách load | Khóa / cursor |
+| Bảng | Cách nạp | Khóa / cursor |
 |---|---|---|
-| `sales_transaction`, `sales_transaction_item`, `product`, `employee` | incremental append | `updated_at` |
-| `store`, `category`, `brand`, `payment_method`, `promotion`, `promotion_product` | replace | toàn bảng |
+| `sales_transaction`, `sales_transaction_item`, `product`, `employee` | incremental, **append** | `updated_at` |
+| `store`, `category`, `brand`, `payment_method`, `promotion`, `promotion_product` | replace (ghi đè) | toàn bảng |
 
-> **Append, không merge:** dòng đổi (`product`, `employee`) thành một dòng mới trong RAW, cùng
-> `id` nhưng `updated_at` mới, nên RAW giữ nhiều phiên bản và dbt dựng SCD2 từ đó. Hạn chế:
-> mỗi cycle `stream.py` phải được ingest trước cycle kế tiếp (con trỏ chỉ thấy trạng thái cuối),
-> và nguồn không có DELETE (con trỏ không thấy dòng bị xóa).
+> **Append, không merge.** Một dòng đổi (`product`, `employee`) thành một dòng **mới** trong RAW: cùng `id`, `updated_at`
+> mới. RAW vì thế giữ mọi phiên bản và dbt dựng SCD2 từ đó. Hai hạn chế: mỗi cycle `stream.py` phải được ingest trước
+> cycle kế tiếp (con trỏ chỉ thấy trạng thái cuối), và nguồn không có DELETE (con trỏ không thấy dòng bị xóa).
 
-> **Cảnh báo:** RAW là nơi duy nhất giữ lịch sử của `product` và `employee` (SCD2 dựng từ đó).
-> Vì vậy `ingest` không có cờ `--full-refresh`. Muốn làm lại từ đầu, dùng `make clean-ingest` (có
-> hỏi xác nhận) rồi chạy lại `make ingest`; việc đó **xóa toàn bộ lịch sử** nên chỉ làm khi chấp nhận
-> mất lịch sử.
+> **Cẩn thận: RAW là nơi duy nhất giữ lịch sử của `product` và `employee`.** Vì vậy `ingest` không có cờ
+> `--full-refresh`. Làm lại từ đầu bằng `uv run clean-ingest` (có hỏi xác nhận) hoặc `make clean-raw` (không hỏi) rồi
+> `make ingest` sẽ **xóa toàn bộ lịch sử**; chỉ làm khi chấp nhận mất.
 
-Chi tiết hợp đồng ingestion: [Project-Spec.md, mục 9](../Project-Spec.md#9-ingestion-specification).
-Code: `src/retail_pulse/ingestion/pipelines.py`, `src/retail_pulse/ingestion/clean.py`.
+Hợp đồng chi tiết: [Project-Spec, mục 9](../Project-Spec.md#9-ingestion-specification).
+Code: `src/retail_pulse/ingestion/pipelines.py` (pipeline), `clean.py` (dọn RAW).
 
-## 1. Tạo key pair cho user dlt
+## 1. Khởi tạo Snowflake
 
-```bash
-mkdir -p .snowflake
-openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out .snowflake/dlt_loader.p8 -nocrypt
-openssl rsa -in .snowflake/dlt_loader.p8 -pubout -out .snowflake/dlt_loader.pub
-```
-
-## 2. Tạo warehouse, database, role, user trên Snowflake
-
-Toàn bộ nằm ở `infras/snowflake/init.sql` (resource monitor, warehouse `RETAIL_WH` XSMALL
-auto-suspend 60 giây, database `RETAIL_PULSE`, schema `RAW`, role `LOADER` và `TRANSFORMER`, user
-`DLT_LOADER` cho dlt và `DBT_TRANSFORMER` cho dbt, đều xác thực bằng key pair). File viết để chạy lại nhiều lần không lỗi.
+Cần tài khoản `ACCOUNTADMIN`. Đặt `SNOWFLAKE_ADMIN_USER` và `SNOWFLAKE_ADMIN_PASSWORD` trong `.env` hoặc `export`
+(`SNOWFLAKE_ACCOUNT` không đặt thì lấy từ `host` trong `.dlt/secrets.toml`).
 
 ```bash
-make snowflake-init-dry   # in các câu lệnh, không kết nối Snowflake
-# Chưa có key trong .snowflake/ thì snowflake-init tự tạo cặp mới (hoặc suy .pub từ .p8 có sẵn).
-# Private key của dlt đặt trong .dlt/secrets.toml; của dbt là .snowflake/dbt_transformer.p8.
-# Đặt SNOWFLAKE_ADMIN_USER và SNOWFLAKE_ADMIN_PASSWORD (tài khoản ACCOUNTADMIN) trong .env hoặc export.
-# SNOWFLAKE_ACCOUNT không đặt thì lấy từ host trong .dlt/secrets.toml.
-export SNOWFLAKE_ADMIN_USER=...  SNOWFLAKE_ADMIN_PASSWORD=...
-make snowflake-init       # chạy thật bằng ACCOUNTADMIN, public key lấy từ .snowflake/dlt_loader.pub
+make snowflake-init-dry   # xem trước các câu lệnh, không kết nối Snowflake
+make snowflake-init       # chạy thật; chạy lại nhiều lần vẫn an toàn
 ```
 
-Kiểm tra: chạy `DESC USER DLT_LOADER;` trên Snowflake, nếu cột `RSA_PUBLIC_KEY_FP` có giá trị
-`SHA256:...` là key đã được gắn.
+Lệnh đọc `infras/snowflake/init.sql` và tạo: resource monitor, warehouse `RETAIL_WH` (XSMALL, tự tắt sau 60 giây),
+database `RETAIL_PULSE`, schema `RAW`, role `LOADER` (dlt ghi vào RAW) và `TRANSFORMER` (dbt đọc RAW, ghi các tầng
+khác), user `DLT_LOADER` và `DBT_TRANSFORMER`; phần dành cho CI nằm ở [phase 9](09-dataops-ci.md).
+Mỗi user đăng nhập bằng key pair. Chưa có key trong `.snowflake/` thì lệnh tự tạo cặp mới (hoặc suy `.pub` từ `.p8`
+có sẵn); `.snowflake/` nằm trong `.gitignore`.
 
-Credential của dlt đặt trong `.dlt/secrets.toml` (không commit file này).
+*Vì sao tách role:* dlt chỉ cần ghi RAW, dbt chỉ cần đọc RAW và ghi các tầng sau. Mỗi bên chỉ có quyền vừa đủ.
+*Nếu bỏ qua:* dùng một tài khoản quyền cao cho mọi việc thì một lỗi trong dbt có thể xóa RAW.
 
-## 3. Full load lần đầu
+Kiểm tra: `DESC USER DLT_LOADER;` trong Snowsight, cột `RSA_PUBLIC_KEY_FP` phải có giá trị `SHA256:...`; trống nghĩa là
+key chưa gắn và dlt không đăng nhập được.
+
+## 2. Cấu hình credential cho dlt
+
+Sao chép file mẫu `dlt/secrets.toml` thành `.dlt/secrets.toml` (file thật, **không commit**) rồi điền: `host` (account
+Snowflake), `database = "RETAIL_PULSE"`, `username = "DLT_LOADER"`, `warehouse = "RETAIL_WH"`, `role = "LOADER"` và
+`private_key` (key của `DLT_LOADER`).
+
+*Về định dạng `private_key`:* dlt nhận chuỗi base64 của key, hoặc dùng `private_key_path` trỏ tới file PEM; xem
+[tài liệu dlt cho Snowflake](https://dlthub.com/docs/dlt-ecosystem/destinations/snowflake).
+*Nếu bỏ qua:* `make ingest` dừng với lỗi thiếu cấu hình credential của destination Snowflake.
+
+## 3. Nạp lần đầu
 
 ```bash
 make ingest
 ```
 
-Lần đầu chưa có con trỏ incremental nên dlt load toàn bộ.
+Chưa có con trỏ incremental nên dlt nạp toàn bộ. Thành công khi cuối log có `... is LOADED and contains no failed jobs`
+và danh sách số dòng, ví dụ lần nạp đầu của bộ seed mặc định:
 
-```bash
-Pipeline retail_oltp_to_snowflake load step finished in 18.71 seconds
-1 load package(s) were loaded to destination snowflake and into dataset raw
-The snowflake destination used snowflake://DLT_LOADER@EGYSTRV-PS95633/RETAIL_PULSE location to store data
-Load package 1791044066.3043814 is LOADED and contains no failed jobs
-Normalized data for the following tables:
-- category: 10 row(s)
-- sales_transaction: 100339 row(s)
-- employee: 80 row(s)
-- payment_method: 4 row(s)
-- promotion: 40 row(s)
-- sales_transaction_item: 286797 row(s)
-- brand: 30 row(s)
-- _dlt_pipeline_state: 1 row(s)
-- store: 10 row(s)
-- promotion_product: 483 row(s)
-- product: 500 row(s)
-
-Load package 1791044066.3043814 is NORMALIZED and NOT YET LOADED to the destination and contains no failed jobs
-```
-Kết quả như trên là đã thành công.
+| Bảng | Số dòng | Bảng | Số dòng |
+|---|---|---|---|
+| `sales_transaction` | 100.339 | `product` | 500 |
+| `sales_transaction_item` | 286.797 | `employee` | 80 |
+| `promotion_product` | 483 | `brand` | 30 |
+| `category` | 10 | `store` | 10 |
+| `payment_method` | 4 | `promotion` | 40 |
 
 ## 4. Kiểm tra trên Snowflake
 
 ```sql
 USE ROLE ACCOUNTADMIN;
-SHOW SCHEMAS IN DATABASE RETAIL_PULSE;   -- thấy RAW (và RAW_STAGING nếu dlt cần)
+SHOW SCHEMAS IN DATABASE RETAIL_PULSE;     -- thấy RAW (và RAW_STAGING nếu dlt cần)
 
 SELECT TABLE_NAME, ROW_COUNT
 FROM RETAIL_PULSE.INFORMATION_SCHEMA.TABLES
 WHERE TABLE_SCHEMA = 'RAW'
 ORDER BY TABLE_NAME;
-
 ```
 
 ## 5. Các lần sau: incremental
 
 ```bash
-uv run ingest          # chỉ lấy dòng có updated_at mới hơn lần trước, ghi thêm (append)
-make clean-ingest      # dọn RAW + state dlt nếu muốn làm lại từ đầu (có hỏi xác nhận)
+make ingest          # chỉ lấy dòng có updated_at mới hơn lần trước, ghi thêm (append)
 ```
 
-Tiếp theo: [Phase 4 — Mô phỏng thay đổi giá sản phẩm](04-product-change-simulator.md).
+Dagster cũng chạy đúng pipeline này ([phase 6](06-dagster.md)), dùng chung state dlt trong `~/.dlt/pipelines`.
+
+## Đọc thêm
+
+- [dlt: incremental loading](https://dlthub.com/docs/general-usage/incremental-loading): cursor `updated_at` hoạt động ra sao.
+- [dlt: nguồn `sql_database`](https://dlthub.com/docs/dlt-ecosystem/verified-sources/sql_database): cách đọc bảng từ PostgreSQL.
+- [Snowflake: key-pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth).
+
+Tiếp theo: [Phase 4 — Mô phỏng thay đổi nguồn](04-product-change-simulator.md).

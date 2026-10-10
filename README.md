@@ -1,38 +1,44 @@
 # Retail Pulse
 
-Building an End-to-End Analytics Engineering with Batch & CDC Streaming Data Platform: PostgreSQL, Debezium, Redpanda, dlt, Snowflake (Medallion & Kimball SCD2), dbt, Dagster, and Github CI/CD.
+Nền tảng phân tích bán lẻ end-to-end chạy trên máy cá nhân: PostgreSQL (OLTP) → dlt → Snowflake (Medallion, Kimball SCD2) → dbt → Dagster → Preset. Dữ liệu được kiểm tra bằng Great Expectations và dbt test, mọi thay đổi được kiểm tra bằng GitHub Actions.
 
-# Problem Definition: A Retail POS & Profit Optimization Analytics Case
-In this challenge, our goal is to maximize enterprise profitability by optimizing logistics management alongside pricing and promotion strategies. To achieve this, we focus on Point of Sale (POS) sales operations as our core business process, as it serves as the primary source of detailed, accurate, and continuous transaction data. We require granular POS transaction records, including itemized purchases, sold quantities, store locations, timestamps, base prices, applied promotion codes, and final transaction amounts. Furthermore, integrating POS data with product cost margins and inventory levels is essential to track product movement and supply chain efficiency. By analyzing this dataset, we can uncover actionable insights to streamline inventory allocation, evaluate promotional effectiveness, refine pricing strategies, and drive sustainable profit growth.
+> **Phạm vi:** nạp dữ liệu theo kiểu incremental dựa trên cột `updated_at` (batch). CDC dựa trên log (Debezium, Redpanda) nằm ngoài phạm vi hiện tại; xem [Project-Spec](./docs/Project-Spec.md).
 
-![Sample cash register receipt](./assets/diagrams/Sample_cash_register_receipt.png)
+# Bài toán: phân tích POS bán lẻ để tối ưu lợi nhuận
 
-> **Documentation:** phase-by-phase roadmap, run guides and component design notes live in
-> [docs/README.md](./docs/README.md). The canonical specification is
-> [docs/Project-Spec.md](./docs/Project-Spec.md).
+Mục tiêu là tăng lợi nhuận của chuỗi bán lẻ bằng cách tối ưu giá và khuyến mãi. Quy trình nghiệp vụ lõi là bán hàng tại điểm bán (POS), vì đây là nguồn dữ liệu giao dịch chi tiết, chính xác và liên tục nhất.
 
-# 1. Operational Data Modeling
-Nguồn OLTP được mô hình hóa theo ba bước Conceptual → Logical (3NF, 10 bảng) → Physical (PostgreSQL),
-gồm sales_transaction (header) và sales_transaction_item (line item) cho nghiệp vụ POS. Nội dung đầy
-đủ và các sơ đồ: [docs/design/operational-data-modeling.md](./docs/design/operational-data-modeling.md).
-Mô hình phân tích cho warehouse: [docs/design/analytical-data-modeling.md](./docs/design/analytical-data-modeling.md).
+Cần có từng dòng hàng đã mua, số lượng, cửa hàng, thời điểm, giá niêm yết, mã khuyến mãi và số tiền cuối cùng, ghép với giá vốn để tính lợi nhuận. Từ đó trả lời các câu hỏi như: cửa hàng và sản phẩm nào lãi nhiều nhất, khuyến mãi nào hiệu quả, đổi giá ảnh hưởng thế nào. Khách hàng, tồn kho, trả hàng và hủy đơn nằm ngoài phạm vi.
 
-# 2 Data Architecture
-## A. High-Level
+![Hóa đơn tính tiền mẫu](./assets/diagrams/Sample_cash_register_receipt.png)
+
+> **Tài liệu:** lộ trình theo phase, hướng dẫn chạy và thiết kế từng thành phần nằm ở
+> [docs/README.md](./docs/README.md). Đặc tả chuẩn của dự án là [docs/Project-Spec.md](./docs/Project-Spec.md).
+
+# 1. Mô hình dữ liệu vận hành
+
+Nguồn OLTP được mô hình hóa qua ba bước: Conceptual → Logical (3NF, 10 bảng) → Physical (PostgreSQL). Nghiệp vụ POS gồm `sales_transaction` (header) và `sales_transaction_item` (từng dòng hàng). Chi tiết và sơ đồ: [docs/design/operational-data-modeling.md](./docs/design/operational-data-modeling.md). Mô hình phân tích cho warehouse: [docs/design/analytical-data-modeling.md](./docs/design/analytical-data-modeling.md).
+
+# 2. Kiến trúc dữ liệu
+
+## A. Tổng quan
+
+Dữ liệu đi từ CSDL nguồn qua pipeline nạp vào Snowflake, được chuẩn hóa rồi dựng thành star schema cho dashboard. Hai lớp phía dưới (biến đổi và điều phối) không chứa dữ liệu mà điều khiển các lớp còn lại.
+
 ```mermaid
 flowchart LR
-  SRC[("Source<br/>OLTP database")]
-  ING["Ingestion<br/>pipeline"]
+  SRC[("Nguồn<br/>CSDL OLTP")]
+  ING["Nạp dữ liệu<br/>(ingestion)"]
 
   SRC <-->|"Extract"| ING
   ING -->|"Load"| RAW
 
   subgraph DWH["Snowflake"]
     direction LR
-    subgraph L1["Raw data of source DB"]
+    subgraph L1["Dữ liệu thô của CSDL nguồn"]
       RAW["Raw"]
     end
-    subgraph L2["Standardized"]
+    subgraph L2["Chuẩn hóa"]
       STG["Staging"]
     end
     subgraph L3["Star schema"]
@@ -41,15 +47,15 @@ flowchart LR
     RAW --> STG --> MART
   end
 
-  BI["BI<br/>Dashboards"]
+  BI["BI<br/>Dashboard"]
   MART --> BI
 
-  TRF["Transformation & Data quality"]
+  TRF["Biến đổi & chất lượng dữ liệu"]
   TRF -.- RAW
   TRF -.- STG
   TRF -.- MART
 
-  ORC["Orchestration & CI/CD"]
+  ORC["Điều phối & CI/CD"]
   ORC -.-> ING
   ORC -.-> TRF
 
@@ -65,30 +71,34 @@ flowchart LR
   class BI bi
   class ORC ops
 ```
-## B. Low-Level Data Architecture
+
+## B. Chi tiết
+
+Cùng luồng trên, gắn với công cụ thật. Tầng Bronze/Silver/Gold là cách gọi theo kiến trúc Medallion.
+
 ```mermaid
 flowchart LR
-  subgraph LOCAL["Local - Docker Compose"]
+  subgraph LOCAL["Máy local - Docker Compose"]
     direction TB
-    GEN["Data generator<br/>Python + SQLAlchemy + Faker<br/>batch / stream"]
+    GEN["Bộ sinh dữ liệu<br/>Python + SQLAlchemy + Faker<br/>seed / stream"]
     PG[("PostgreSQL<br/>OLTP - 3NF")]
     GEN -->|insert / update| PG
   end
 
   DLT["dlt<br/>ingestion pipeline"]
 
-  PG -->|"Extract PostgreSQL<br/>Initial load → Incremental → CDC"| DLT
-  DLT -->|"Load into<br/>Snowflake RAW"| RAW
+  PG -->|"Extract PostgreSQL<br/>Load lần đầu → Incremental"| DLT
+  DLT -->|"Load vào<br/>Snowflake RAW"| RAW
 
   subgraph SF["Snowflake"]
     direction LR
-    subgraph L1["Raw data of PostgreSQL"]
+    subgraph L1["Dữ liệu thô từ PostgreSQL"]
       RAW["Raw<br/>(Bronze)"]
     end
-    subgraph L2["Standardized"]
+    subgraph L2["Chuẩn hóa"]
       STG["Staging<br/>(Silver)"]
     end
-    subgraph L3["Business logic"]
+    subgraph L3["Logic nghiệp vụ"]
       INT["Intermediate<br/>(Silver)"]
     end
     subgraph L4["Star schema - Kimball"]
@@ -97,24 +107,24 @@ flowchart LR
     RAW --> STG --> INT --> MART
   end
 
-  BI["Preset<br/>Revenue, Product,<br/>Store dashboards"]
+  BI["Preset<br/>Dashboard Revenue,<br/>Product, Store"]
   MART --> BI
 
-  DBT["dbt-core - local<br/>transform + dbt tests"]
-  GE["Great Expectations<br/>raw / bronze checks"]
+  DBT["dbt-core - chạy local<br/>transform + dbt test"]
+  GE["Great Expectations<br/>kiểm tra RAW"]
 
   DBT -.- STG
   DBT -.- INT
   DBT -.- MART
   GE -.- RAW
 
-  DAG["Dagster<br/>dagster-dlt + dagster-dbt<br/>assets, schedules, sensors"]
-  CI["GitHub CI<br/>sqlfluff + ruff<br/>dbt build slim CI, deploy"]
+  DAG["Dagster<br/>dagster-dlt + dagster-dbt<br/>asset, job, lịch chạy"]
+  CI["GitHub Actions<br/>ruff + dbt slim CI"]
 
-  DAG ==>|orchestrates| DLT
+  DAG ==>|điều phối| DLT
   DAG ==> GE
   DAG ==> DBT
-  CI -->|deploy| DAG
+  CI -.->|kiểm tra PR| DBT
 
   classDef src fill:#C62828,stroke:#8E0000,color:#FFFFFF
   classDef layer fill:#BBDEFB,stroke:#1565C0,color:#0D47A1
@@ -129,23 +139,24 @@ flowchart LR
   class DAG,CI ops
 ```
 
-## C. Tool Architecture
+## C. Công cụ
 
-The same pipeline seen as the tools that implement it. Data moves left to right through the middle row (generator → PostgreSQL → dlt → Snowflake RAW → dbt), dbt builds the Snowflake layers on the bottom row, and Dagster and GitHub CI sit above as the control plane.
+Cùng pipeline nhìn theo công cụ. Dữ liệu đi từ trái sang phải ở hàng giữa (generator → PostgreSQL → dlt → Snowflake RAW → dbt), dbt dựng các tầng Snowflake ở hàng dưới, Dagster và GitHub CI nằm phía trên làm lớp điều khiển.
 
-![RetailPulse tool architecture](./assets/diagrams/retailpulse-tool.png)
+![Kiến trúc công cụ RetailPulse](./assets/diagrams/retailpulse-tool.png)
 
-| Tool | Role | Status |
+> Ảnh vẽ từ bản thiết kế ban đầu nên khác thực tế ở ba điểm: CI hiện chỉ có `ruff` và slim CI (chưa có `sqlfluff`, chưa tự deploy); dbt không dùng snapshot (SCD2 tự xây bằng window function); Great Expectations chưa có trong ảnh.
+
+| Công cụ | Vai trò | Trạng thái |
 | --- | --- | --- |
-| Python generator (SQLAlchemy, Faker) | Seeds historical data and simulates product price/cost changes | Done |
-| PostgreSQL 16 (Docker Compose) | Source OLTP database, 3NF | Done |
-| dlt | Incremental ingestion from PostgreSQL to Snowflake RAW | Done |
-| Snowflake | RAW, staging, intermediate and marts layers | RAW done |
-| dbt Core | Staging, intermediate, marts, SCD2 dimensions, tests | Planned |
-| Dagster | Orchestrates dlt and dbt as assets | Planned |
-| Preset | BI dashboards on the marts | Planned |
-| GitHub CI | Lint, test, deploy | Planned |
-| Great Expectations | Optional data quality checks on RAW | Done |
+| Python generator (SQLAlchemy, Faker) | Seed dữ liệu lịch sử, mô phỏng đổi giá, đổi cửa hàng nhân viên và bán hàng mới | Xong |
+| PostgreSQL 16 (Docker Compose) | CSDL nguồn OLTP, 3NF | Xong |
+| dlt | Nạp incremental từ PostgreSQL vào Snowflake RAW | Xong |
+| Snowflake | Các tầng RAW, staging, intermediate, marts | Xong |
+| dbt Core | Staging, intermediate, marts, dimension SCD2, test | Xong |
+| Dagster | Điều phối dlt, dbt và kiểm tra chất lượng thành asset, job, lịch chạy hằng ngày | Xong |
+| Preset | Dashboard BI trên marts | Xong |
+| Great Expectations | Kiểm tra chất lượng dữ liệu RAW | Xong |
+| GitHub Actions | Lint `ruff`, slim CI cho dbt, bảo vệ nhánh `main` | Xong (chưa có CD, `sqlfluff`, `pytest`) |
 
-See [docs/README.md](./docs/README.md) for the phase-by-phase roadmap.
-
+Lộ trình theo phase và cách chạy: [docs/README.md](./docs/README.md).

@@ -35,21 +35,33 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | Operational data modeling (OLTP: conceptual, logical, physical) | [design/operational-data-modeling.md](design/operational-data-modeling.md) | `infras/postgres/init/01_schema.sql`, `src/retail_pulse/oltp/` | — |
 | Analytical data modeling (Kimball: process, grain, dimension, fact) | [design/analytical-data-modeling.md](design/analytical-data-modeling.md) | dbt (phase 5) | — |
 
-## Quick start
+## Chạy nhanh
 
+Đến Postgres (chỉ cần Docker, chưa cần Snowflake):
 ```bash
-make install     # cài dependency (uv sync)
-make up          # bật PostgreSQL
-make seed        # nạp ~100k giao dịch lịch sử
-make stream      # đổi giá vài sản phẩm
-make ingest      # load sang Snowflake RAW, lần đầu load hết, sau đó incremental (cần cấu hình phase 3)
-make test        # chạy toàn bộ test
-make quality     # Great Expectations kiểm tra RAW
-make help        # liệt kê mọi lệnh
+make install              # cài thư viện (uv sync)
+cp .env.example .env      # rồi sửa PG_PASSWORD
+make up                   # bật PostgreSQL
+make seed                 # nạp ~100k giao dịch lịch sử
+make test                 # chạy toàn bộ test
 ```
+
+Sang Snowflake, dbt và Dagster (cần cấu hình ở [phase 3](phases/03-ingestion-snowflake.md) và [phase 5](phases/05-dbt.md)):
+```bash
+make snowflake-init       # một lần: tạo warehouse, database, role, user
+make ingest               # nạp Postgres sang Snowflake RAW
+make dbt-deps && make dbt-build   # dựng staging đến marts và chạy test
+make dagster              # mở giao diện Dagster để điều phối cả chuỗi
+```
+`make help` liệt kê mọi lệnh.
+
+> **Cẩn thận:** `make seed`, `make reseed` và `make db-reset` đều **xóa RAW trên Snowflake** trước khi chạy. RAW là nơi
+> duy nhất giữ lịch sử SCD2 của `product` và `employee`, nên xóa là mất lịch sử đó. Chi tiết ở [phase 2](phases/02-historical-seed.md).
 
 ## Quy ước tài liệu
 
-- `docs/phases/NN-*.md`: hướng dẫn **chạy và kiểm tra** một phase — làm gì, lệnh nào, kết quả mong đợi.
-- `docs/design/<thành-phần>.md`: **vì sao thiết kế như vậy và hiện thực ra sao** — dành cho người sửa code.
-- Khi xong một phase: thêm file `phases/`, cập nhật bảng ở trên và mục 14 của spec trong cùng thay đổi.
+- `docs/phases/NN-*.md`: hướng dẫn **chạy và kiểm tra** một phase: làm gì, lệnh nào, kết quả mong đợi.
+- `docs/design/<thành-phần>.md`: **vì sao thiết kế như vậy** và hiện thực ra sao, dành cho người sửa code.
+- Mỗi bước thao tác tay nêu rõ **vì sao làm** và **hậu quả nếu bỏ qua**. Khái niệm mới có mục "Đọc thêm" với đường dẫn đã kiểm tra còn sống.
+- Viết ngắn, đúng thứ tự người đọc cần làm. Thuật ngữ kỹ thuật chuẩn (staging, incremental, SCD2...) giữ nguyên tiếng Anh.
+- Khi xong một phase: thêm file trong `phases/`, cập nhật bảng ở trên và mục 14 của spec trong cùng thay đổi.

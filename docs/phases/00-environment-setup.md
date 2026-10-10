@@ -2,11 +2,11 @@
 
 Mục tiêu: có đủ công cụ để chạy mọi phase sau trên máy local.
 
-| Thành phần | Phiên bản / ghi chú |
+| Thành phần | Yêu cầu |
 |---|---|
-| OS | Ubuntu (hoặc WSL2) |
-| Python | 3.12 (pin trong `.python-version`) |
-| Quản lý package | [uv](https://docs.astral.sh/uv/) — `uv.lock` là nguồn chuẩn |
+| Hệ điều hành | Ubuntu hoặc WSL2 |
+| Python | 3.12 (ghim trong `.python-version`) |
+| Quản lý thư viện | [uv](https://docs.astral.sh/uv/); `uv.lock` là nguồn chuẩn |
 | Container | Docker + Docker Compose (chạy PostgreSQL) |
 
 ## 1. Cài uv
@@ -14,66 +14,69 @@ Mục tiêu: có đủ công cụ để chạy mọi phase sau trên máy local.
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv --version
-
-# Nếu đã cài trước đó
-uv self update
 ```
 
-## 2. Cài dependency của project
+*Vì sao uv:* một lệnh dựng đúng môi trường Python 3.12 và đúng phiên bản từng thư viện (khóa trong `uv.lock`).
+*Nếu bỏ qua:* mỗi máy một phiên bản thư viện, lỗi "máy tôi chạy được" rất khó tái hiện.
+
+## 2. Cài thư viện và cấu hình
 
 ```bash
-make install        # = uv sync, cài cả nhóm dev (ruff, pytest, pyrefly, ...)
-cp .env.example .env  # rồi sửa PG_PASSWORD
+make install               # = uv sync, cài cả nhóm dev (ruff, pytest, sqlfluff, ...)
+cp .env.example .env       # rồi sửa PG_PASSWORD
 ```
 
-## 3. Cách project đã được khởi tạo (để tham khảo)
+*Vì sao `.env`:* giữ thông tin kết nối PostgreSQL ngoài code. File này đã nằm trong `.gitignore`, không bao giờ commit.
+*Nếu bỏ qua:* `make up` dừng ngay với thông báo thiếu `PG_USER` hoặc `PG_PASSWORD`.
+
+Danh sách thư viện nằm ở `pyproject.toml`, theo vai trò: generator (`sqlalchemy`, `psycopg`, `faker`), ingestion
+(`dlt[snowflake]`), transform (`dbt-core`, `dbt-snowflake`), orchestration (`dagster`, `dagster-dbt`, `dagster-dlt`),
+quality (`great-expectations`), dev (`ruff`, `pytest`, `sqlfluff`, `pre-commit`, `pyrefly`).
+
+## 3. Kiểm tra môi trường
 
 ```bash
-uv init retail-pulse --package --python 3.12
-cd retail-pulse
-uv python pin 3.12
-
-# Generator (OLTP)
-uv add sqlalchemy "psycopg[binary]" faker pydantic-settings
-# Ingestion
-uv add "dlt[snowflake]"
-# Transform
-uv add dbt-core dbt-snowflake
-# Orchestration
-uv add dagster dagster-dbt dagster-dlt
-# Data quality
-uv add great-expectations
-# Dev tools
-uv add --dev dagster-webserver ruff sqlfluff sqlfluff-templater-dbt pytest pre-commit pyrefly
+make lint   # ruff check --fix + ruff format trên src/
+make test   # bật Postgres rồi chạy pytest (dùng DB tạm, xóa sau khi xong)
 ```
 
-## 4. Cấu trúc thư mục
+*Vì sao:* biết môi trường đúng trước khi làm tiếp, thay vì gặp lỗi lạ ở phase sau.
+Lưu ý CI kiểm tra cả thư mục `tests/` (`ruff check src tests`), còn `make lint` chỉ chạy trên `src/`.
+
+## Cấu trúc thư mục
 
 ```text
 .
 ├── Makefile                  # lệnh thường dùng: make help
-├── README.md                 # bài toán, data modeling, kiến trúc
-├── assets/diagrams/          # hình dùng trong README
+├── README.md                 # bài toán, mô hình dữ liệu, kiến trúc
+├── pyproject.toml, uv.lock   # thư viện và phiên bản
+├── .env.example              # mẫu cấu hình PostgreSQL
+├── .github/workflows/        # CI: ci.yml, manifest.yml
+├── assets/diagrams/          # hình dùng trong tài liệu
+├── dbt/                      # dự án dbt: models, tests, macros, ci/profiles.yml
+├── dlt/secrets.toml          # file MẪU; bản thật đặt ở .dlt/secrets.toml (không commit)
 ├── docs/
-│   ├── README.md             # tổng quan + lộ trình theo phase
-│   ├── Project-Spec.md       # đặc tả chuẩn của project
+│   ├── README.md             # tổng quan và lộ trình theo phase
+│   ├── Project-Spec.md       # đặc tả chuẩn của dự án
 │   ├── phases/               # hướng dẫn chạy từng phase
 │   └── design/               # thiết kế chi tiết từng thành phần
 ├── infras/
 │   ├── docker-compose.yml
-│   └── postgres/init/01_schema.sql
+│   ├── postgres/init/01_schema.sql
+│   └── snowflake/init.sql
 ├── src/retail_pulse/
-│   ├── oltp/                 # SQLAlchemy engine + ORM model
+│   ├── oltp/                 # SQLAlchemy engine và ORM model
 │   ├── generator/            # seed.py, stream.py, common.py
-│   └── ingestion/            # dlt pipeline + clean
-├── tests/                    # pytest
-├── pyproject.toml
-└── uv.lock
+│   ├── ingestion/            # pipeline dlt, dọn RAW, khởi tạo Snowflake
+│   ├── orchestration/        # Dagster: asset dlt và dbt, job, lịch chạy
+│   └── quality/              # Great Expectations kiểm tra RAW
+└── tests/                    # pytest
 ```
 
-## 5. Kiểm tra code
+## Đọc thêm
 
-```bash
-make lint   # ruff check --fix + ruff format
-make test   # bật Postgres rồi chạy pytest
-```
+- [uv: làm việc với dự án](https://docs.astral.sh/uv/concepts/projects/layout/) và
+  [`uv sync`](https://docs.astral.sh/uv/concepts/projects/sync/): vì sao có `uv.lock` và cách đồng bộ môi trường.
+- [Ruff](https://docs.astral.sh/ruff/) (lint và format) và [pytest](https://docs.pytest.org/en/stable/).
+
+Tiếp theo: [Phase 1 — PostgreSQL OLTP](01-oltp-database.md).
