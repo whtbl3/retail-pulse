@@ -1,16 +1,20 @@
 SELECT
-  {{ surrogate_key(['product_id', 'valid_from']) }} AS product_key,
-  product_id,
-  product_sku,
-  product_name,
-  category_id,
-  brand_id,
-  unit_price,
-  unit_cost,
-  valid_from,
-  valid_to,
-  is_current
-FROM {{ ref('int_product_scd2') }}
+  {{ surrogate_key(['p.product_id', 'p.valid_from']) }} AS product_key,
+  p.product_id,
+  p.product_sku,
+  p.product_name,
+  p.category_id,
+  c.category_name,
+  p.brand_id,
+  b.brand_name,
+  p.unit_price,
+  p.unit_cost,
+  p.valid_from,
+  p.valid_to,
+  p.is_current
+FROM {{ ref('int_product_scd2') }} AS p
+LEFT JOIN {{ ref('stg_category') }} AS c ON p.category_id = c.category_id
+LEFT JOIN {{ ref('stg_brand') }} AS b ON p.brand_id = b.brand_id
 
 UNION ALL
 
@@ -21,7 +25,9 @@ SELECT
     'Unknown'                           AS product_sku,
     'Unknown'                           AS product_name,
     NULL                                AS category_id,
+    'Unknown'                           AS category_name,
     NULL                                AS brand_id,
+    'Unknown'                           AS brand_name,
     NULL                                AS unit_price,
     NULL                                AS unit_cost,
     '1900-01-01'::timestamp_tz          AS valid_from,
