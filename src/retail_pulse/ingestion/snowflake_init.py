@@ -1,4 +1,4 @@
-"""Khởi tạo Snowflake (warehouse, database, role, user) từ infras/snowflake/init.sql."""
+"""Khởi tạo Snowflake (warehouse, database, role, user, CI) từ infras/snowflake/init.sql."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ from pathlib import Path
 SQL_FILE = Path(__file__).parents[3] / "infras" / "snowflake" / "init.sql"
 KEY_DIR = Path(".snowflake")  # đã nằm trong .gitignore
 # user Snowflake -> tên file key; placeholder trong init.sql là __<USER>_PUBLIC_KEY__
-USERS = {"DLT_LOADER": "dlt_loader", "DBT_TRANSFORMER": "dbt_transformer"}
+USERS = {
+    "DLT_LOADER": "dlt_loader",
+    "DBT_TRANSFORMER": "dbt_transformer",
+    "GITHUB_CI": "github_ci",
+}
 
 
 def load_statements(keys: dict[str, str]) -> list[str]:

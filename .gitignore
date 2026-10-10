@@ -29,6 +29,9 @@ logs/
 
 # dbt
 profiles.yml
+# profile của CI chỉ dùng biến môi trường, không có bí mật nên được commit
+!dbt/ci/profiles.yml
+.user.yml
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
@@ -36,3 +39,4 @@ dbt/dbt_packages/
 # dagster
 .tmp_dagster_home_*/
 .dagster_home/
+state/

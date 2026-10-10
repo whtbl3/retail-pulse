@@ -1,0 +1,26 @@
+# Profile cho GitHub Actions. Không chứa bí mật: mọi giá trị nhạy cảm lấy từ biến môi trường.
+retail_pulse:
+  target: ci
+  outputs:
+    # PR: ghi vào database CI, schema riêng theo PR (PR_<số>_STAGING, PR_<số>_MARTS...)
+    ci:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: GITHUB_CI
+      role: CI_RUNNER
+      private_key_path: "{{ env_var('CI_PRIVATE_KEY_PATH') }}"
+      database: RETAIL_PULSE_CI
+      warehouse: RETAIL_CI_WH
+      schema: "{{ env_var('CI_SCHEMA') }}"
+      threads: 4
+    # Chỉ để sinh manifest.json mô tả bản thật (không build gì): trỏ vào database thật
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: GITHUB_CI
+      role: CI_RUNNER
+      private_key_path: "{{ env_var('CI_PRIVATE_KEY_PATH') }}"
+      database: RETAIL_PULSE
+      warehouse: RETAIL_CI_WH
+      schema: DBT_DEV
+      threads: 4
