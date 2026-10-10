@@ -88,6 +88,10 @@ models:
               arguments:
                 to: ref('stg_category')
                 field: category_id
+      - name: category_name
+        description: Tên danh mục hiện tại (Type 1, lấy từ stg_category theo category_id của phiên bản); Unknown cho dòng -2.
+      - name: brand_name
+        description: Tên thương hiệu hiện tại (Type 1, lấy từ stg_brand theo brand_id của phiên bản); Unknown cho dòng -2.
       - name: brand_id
         description: Mã thương hiệu tại phiên bản này (Type 2); rỗng cho Unknown.
         data_tests:
