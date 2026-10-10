@@ -51,6 +51,31 @@ hưởng".
 | Quyền workflow | `permissions` tối thiểu (`contents: read`, `actions: read`); PR từ fork không nhận secret nên không chạy được phần Snowflake (chủ ý) |
 | Hai PR đẩy liên tiếp | `concurrency` hủy lần chạy cũ của cùng PR |
 
+## Ví dụ: một PR chạy thì Snowflake có gì
+
+Giả sử PR số 7 sửa `dim_payment_method`. Ba nhóm chữ trong tên là: database CI, schema theo PR, tên bảng.
+
+| Model | Khi chạy ở máy bạn (dev) | Khi chạy trong CI của PR 7 |
+|---|---|---|
+| `stg_payment_method` | `RETAIL_PULSE.STAGING.stg_payment_method` | `RETAIL_PULSE_CI.PR_7_STAGING.stg_payment_method` |
+| `int_product_scd2` | `RETAIL_PULSE.INTERMEDIATE.int_product_scd2` | `RETAIL_PULSE_CI.PR_7_INTERMEDIATE.int_product_scd2` |
+| `dim_payment_method` | `RETAIL_PULSE.MARTS.dim_payment_method` | `RETAIL_PULSE_CI.PR_7_MARTS.dim_payment_method` |
+| `fct_sales` | `RETAIL_PULSE.MARTS.fct_sales` | `RETAIL_PULSE_CI.PR_7_MARTS.fct_sales` |
+
+(Tên lấy từ `dbt parse --target ci` với `CI_SCHEMA=PR_7`; Snowflake tự viết hoa khi lưu.)
+
+Trong một lần chạy:
+1. **Bị sửa và phía sau nó** (`dim_payment_method`, rồi `fct_sales` vì nó dùng dimension này) được build vào
+   `RETAIL_PULSE_CI.PR_7_*`, kèm test của chúng. Đây là chỗ bạn thấy lỗi của PR, không đụng bản thật.
+2. **Model không đổi** không được build lại. Nhờ `--defer`, mỗi lần model của PR gọi `ref()` tới chúng thì dbt
+   trỏ sang bản thật, ví dụ `RETAIL_PULSE.MARTS.dim_product`. Đó là lý do user `GITHUB_CI` phải có quyền
+   **đọc** các schema thật; thiếu quyền này thì bước build báo "does not exist or not authorized".
+3. Bước cuối `drop_ci_schemas` xóa cả bốn schema `PR_7_*`. Bỏ qua bước này thì mỗi PR để lại một đống schema
+   mồ côi trong `RETAIL_PULSE_CI`, tốn dung lượng và rối khi cần tìm.
+
+PR số 8 mở song song thì dùng `PR_8_*`, hai PR không đè nhau. Nếu mọi PR dùng chung một schema, PR này build có thể
+xóa bảng mà PR kia đang test và cho kết quả đỏ vô lý.
+
 ## Các file
 | File | Việc |
 |---|---|
