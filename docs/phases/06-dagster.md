@@ -27,7 +27,7 @@ Chưa làm: thử lại tự động, cảnh báo, sensor và triển khai lên 
 | `dlt_assets.py` | Mỗi bảng RAW là một asset (bước 1) |
 | `dbt_assets.py` | Mỗi model dbt là một asset (bước 2) |
 | `quality_checks.py` | Kiểm tra Great Expectations gắn vào asset RAW, chặn dbt khi fail ([phase 8](08-great-expectations.md)) |
-| `jobs.py` | Hai job và lịch chạy (bước 4, 5) |
+| `jobs.py` | Hai job và lịch chạy (bước 3, 4) |
 | `definitions.py` | Gom tất cả vào `Definitions` |
 
 ## Chạy
@@ -82,7 +82,7 @@ dbt_project.prepare_if_dev()
 @dbt_assets(manifest=dbt_project.manifest_path)
 def retail_dbt_assets(context, dbt: DbtCliResource):
     args = ["build"]
-    if context.run.tags.get("full_refresh") == "true":   # xem bước 4
+    if context.run.tags.get("full_refresh") == "true":   # xem bước 3
         args.append("--full-refresh")
     yield from dbt.cli(args, context=context).stream()
 ```
