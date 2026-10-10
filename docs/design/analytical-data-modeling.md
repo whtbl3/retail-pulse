@@ -194,8 +194,8 @@ Project-Spec). SCD2 được dựng thẳng từ các dòng đó bằng window f
 một bản sao lịch sử không dựng lại được, còn window function có tính **idempotent** (`dbt build --full-refresh` ra cùng kết quả bao nhiêu lần
 cũng được). Hai cách có cùng mức chi tiết.
 
-0. **Staging dedup trước.** Con trỏ incremental có thể nạp lại các dòng nằm đúng biên, nên staging giữ một dòng cho mỗi tổ hợp (`id`, `updated_at`,
-   cùng mọi cột nghiệp vụ): `qualify row_number() over (partition by <mọi cột nghiệp vụ> order by _dlt_load_id desc) = 1`.
+0. **Staging dedup trước.** Con trỏ incremental có thể nạp lại các dòng nằm đúng biên, nên staging giữ đúng một dòng cho mỗi tổ hợp mọi cột
+   nghiệp vụ (gồm `updated_at`): `qualify row_number() over (partition by <mọi cột nghiệp vụ> order by _dlt_load_id desc) = 1`.
 1. Sắp xếp các dòng của một khóa nghiệp vụ theo `updated_at`.
 2. **So từng dòng với dòng trước bằng `LAG` và `IS DISTINCT FROM`**, chỉ giữ dòng có cột theo dõi thay đổi. Không dùng `DISTINCT` hay gom theo giá
    trị: chuỗi giá A → B → A phải ra 3 phiên bản; gom theo giá trị sẽ gộp hai A làm một và khoảng hiệu lực sai. `IS DISTINCT FROM` cũng xử lý đúng `NULL`.
