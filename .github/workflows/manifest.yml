@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-      CI_PRIVATE_KEY_PATH: ${{ runner.temp }}/ci_key.p8
       DBT_PROFILES_DIR: dbt/ci
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +25,8 @@ jobs:
           CI_PRIVATE_KEY: ${{ secrets.CI_PRIVATE_KEY }}
         run: |
           umask 077
-          printf '%s\n' "$CI_PRIVATE_KEY" > "$CI_PRIVATE_KEY_PATH"
+          printf '%s\n' "$CI_PRIVATE_KEY" > "$RUNNER_TEMP/ci_key.p8"
+          echo "CI_PRIVATE_KEY_PATH=$RUNNER_TEMP/ci_key.p8" >> "$GITHUB_ENV"
       - run: uv run dbt deps --project-dir dbt
       - run: uv run dbt parse --project-dir dbt --target prod
         env:
