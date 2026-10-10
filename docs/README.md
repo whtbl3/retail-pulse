@@ -25,6 +25,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 6 | Dagster orchestration | Xong | [phases/06-dagster.md](phases/06-dagster.md) |
 | 7 | Preset dashboards | Xong | [phases/07-preset.md](phases/07-preset.md) |
 | 8 | Great Expectations: kiểm tra chất lượng RAW | Xong | [phases/08-great-expectations.md](phases/08-great-expectations.md) |
+| 9 | DataOps: GitHub Actions, slim CI cho dbt | Đang làm (đã viết, chờ thiết lập Snowflake và secrets) | [phases/09-dataops-ci.md](phases/09-dataops-ci.md) |
 
 ## Thiết kế chi tiết theo thành phần
 
