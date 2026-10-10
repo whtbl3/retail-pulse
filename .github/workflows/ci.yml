@@ -1,4 +1,5 @@
 # Mỗi pull request: lint Python, rồi slim CI cho dbt (chỉ build model đổi + model phụ thuộc vào nó).
+# Các bước dbt chỉ chạy khi PR đổi dbt/ (trừ file *.example), pyproject.toml, uv.lock hoặc chính file này.
 name: CI
 
 on:
@@ -31,9 +32,31 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # cần lịch sử đầy đủ để so với nhánh gốc
+
+      # PR chỉ đổi tài liệu thì bỏ qua các bước dbt. Job vẫn báo xanh (check bắt buộc không bị treo),
+      # chỉ các bước bên dưới có điều kiện `if` là bị bỏ qua.
+      - name: PR có đổi dbt không?
+        id: changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # File mẫu (*.example) chỉ là tài liệu, không ảnh hưởng dbt
+          if git diff --name-only "origin/$BASE_REF...HEAD" | grep -vE '\.example$' \
+              | grep -qE '^(dbt/|pyproject\.toml$|uv\.lock$|\.github/workflows/ci\.yml$)'; then
+            echo "dbt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dbt=false" >> "$GITHUB_OUTPUT"
+            echo "PR không đổi dbt, bỏ qua các bước dbt."
+          fi
+
       - uses: astral-sh/setup-uv@v5
+        if: steps.changes.outputs.dbt == 'true'
       - run: uv sync --frozen
+        if: steps.changes.outputs.dbt == 'true'
       - name: Ghi private key ra file tạm
+        if: steps.changes.outputs.dbt == 'true'
         env:
           CI_PRIVATE_KEY: ${{ secrets.CI_PRIVATE_KEY }}
         run: |
@@ -41,8 +64,10 @@ jobs:
           printf '%s\n' "$CI_PRIVATE_KEY" > "$RUNNER_TEMP/ci_key.p8"
           echo "CI_PRIVATE_KEY_PATH=$RUNNER_TEMP/ci_key.p8" >> "$GITHUB_ENV"
       - run: uv run dbt deps --project-dir dbt
+        if: steps.changes.outputs.dbt == 'true'
 
       - name: Tải manifest của bản thật (nếu đã có)
+        if: steps.changes.outputs.dbt == 'true'
         run: |
           RUN_ID=$(gh run list --workflow=manifest.yml --branch=main --status=success \
             --limit=1 --json databaseId --jq '.[0].databaseId')
@@ -51,6 +76,7 @@ jobs:
           fi
 
       - name: dbt build (slim nếu có manifest, ngược lại build toàn bộ)
+        if: steps.changes.outputs.dbt == 'true'
         run: |
           if [ -f state/manifest.json ]; then
             uv run dbt build --project-dir dbt --select state:modified+ --defer --state "$GITHUB_WORKSPACE/state"
@@ -60,5 +86,5 @@ jobs:
           fi
 
       - name: Dọn schema của PR
-        if: always()
+        if: always() && steps.changes.outputs.dbt == 'true'
         run: uv run dbt run-operation drop_ci_schemas --project-dir dbt
