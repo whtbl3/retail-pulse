@@ -96,24 +96,111 @@ xóa bảng mà PR kia đang test và cho kết quả đỏ vô lý.
 Luồng một PR: lấy manifest mới nhất của `main` (nếu chưa có thì build toàn bộ) → `dbt build
 --select state:modified+ --defer` vào `RETAIL_PULSE_CI.PR_<số>_*` → xóa schema.
 
-## Thiết lập (làm một lần)
+## Thiết lập từ đầu: bắt đầu từ đâu và theo thứ tự nào
 
-**1-2. Tạo key pair và môi trường CI trên Snowflake: một lệnh.** Phần CI nằm cuối `infras/snowflake/init.sql`
-nên chạy cùng khởi tạo chung (xem [phase 3](03-ingestion-snowflake.md)):
+Làm **một lần**, theo đúng thứ tự dưới đây. Thứ tự quan trọng vì bước sau cần thứ do bước trước tạo ra.
+
+| Bước | Việc | Làm ở đâu | Vì sao đứng ở vị trí này |
+|---|---|---|---|
+| 1 | Chuẩn bị tài khoản quản trị Snowflake | Máy của bạn (`.env`) | Tạo database, role, user cần quyền `ACCOUNTADMIN` |
+| 2 | Tạo môi trường CI trên Snowflake | Máy của bạn (`make snowflake-init`) | Lệnh này sinh ra file key mà bước 3 cần dán lên GitHub |
+| 3 | Thêm hai secret vào GitHub | Giao diện web GitHub | Workflow cần secret để đăng nhập Snowflake |
+| 4 | Đẩy workflow lên `main`, chạy `Prod manifest` | GitHub | Tạo manifest "bản thật" đầu tiên để PR sau so sánh |
+| 5 | Mở một PR thử | GitHub | Lần đầu CI thật sự kết nối Snowflake; thử trước khi người khác cần đến |
+| 6 | Bật bảo vệ nhánh `main` | Giao diện web GitHub | Phải làm **sau cùng** (xem lý do ở cuối mục) |
+
+### Bước 1. Chuẩn bị tài khoản quản trị Snowflake
+
+Bạn cần một user có role `ACCOUNTADMIN` (không phải `DLT_LOADER` hay `DBT_TRANSFORMER`) và ba biến này trong
+`.env` hoặc `export` trước khi chạy:
+
 ```bash
-make snowflake-init       # chạy lại an toàn; tự tạo .snowflake/github_ci.p8 và .pub nếu chưa có
+SNOWFLAKE_ACCOUNT=...          # account identifier, cùng giá trị dbt đang dùng
+SNOWFLAKE_ADMIN_USER=...       # user ACCOUNTADMIN
+SNOWFLAKE_ADMIN_PASSWORD=...   # mật khẩu của user đó (chỉ để ở máy, không commit)
 ```
-Schema `STAGING`, `INTERMEDIATE`, `MARTS` được tạo bằng role `TRANSFORMER` (để dbt vẫn làm chủ sở hữu) rồi mới
-cấp quyền đọc cho `CI_RUNNER`, nên chạy được ngay cả khi dbt chưa build lần nào.
 
-**3. Thêm hai secret vào GitHub** (Settings, Secrets and variables, Actions):
-- `SNOWFLAKE_ACCOUNT`: account identifier (như trong `.env`).
-- `CI_PRIVATE_KEY`: toàn bộ nội dung `.snowflake/github_ci.p8`, gồm cả dòng BEGIN/END.
+- *Vì sao:* chỉ `ACCOUNTADMIN` mới tạo được resource monitor, database, role và user.
+- *Nếu thiếu:* lệnh dừng với thông báo "Thiếu ..." và chưa tạo gì trên Snowflake. Có thể file key đã được sinh
+  ở máy; cứ giữ lại, lần chạy sau sẽ dùng tiếp đúng cặp key đó.
 
-**4. Bật workflow:** push các file lên `main`. Workflow `Prod manifest` chạy và tạo artifact đầu tiên. Sau đó
-mở một PR thử có sửa một model để xem slim CI chạy.
+### Bước 2. Tạo môi trường CI trên Snowflake (một lệnh)
 
-`.snowflake/` đã nằm trong `.gitignore`; dán xong vào GitHub thì giữ file ở máy hoặc xóa đều được.
+Xem trước, không kết nối Snowflake, chỉ in các câu lệnh sẽ chạy:
+```bash
+make snowflake-init-dry
+```
+Chạy thật:
+```bash
+make snowflake-init
+```
+Lệnh đọc file `infras/snowflake/init.sql` (53 câu lệnh) và **chạy lại nhiều lần vẫn an toàn**: mọi câu đều là
+`IF NOT EXISTS` hoặc `GRANT`, nên thứ đã có (warehouse, user của dlt và dbt) không bị đổi, miễn là bạn giữ nguyên các file key trong `.snowflake/`. Lần đầu nó cũng tự sinh cặp key
+cho user CI tại `.snowflake/github_ci.p8` (private) và `.snowflake/github_ci.pub` (public).
+
+Phần dành cho CI tạo ra những thứ sau, và mỗi thứ có lý do riêng:
+
+| Tạo ra | Để làm gì | Nếu không có |
+|---|---|---|
+| Database `RETAIL_PULSE_CI` | Nơi CI ghi các bảng thử (`PR_<số>_*`) | CI phải ghi vào database thật và có thể đè lên dữ liệu thật |
+| Warehouse `RETAIL_CI_WH` (XSMALL, tự tắt sau 60 giây) | Máy tính riêng cho CI | CI dùng chung `RETAIL_WH`, tranh tài nguyên với pipeline thật |
+| Resource monitor `RETAIL_CI_RM` (2 credit mỗi tháng, tự dừng ở 100%) | Trần chi phí cho CI | Một workflow lặp vô hạn có thể đốt hết credit của cả tài khoản |
+| Role `CI_RUNNER`: **ghi** trong `RETAIL_PULSE_CI`, chỉ **đọc** `RETAIL_PULSE` | Quyền vừa đủ cho CI | Quyền rộng hơn thì một lỗi trong CI có thể sửa hoặc xóa dữ liệu thật |
+| User `GITHUB_CI` (dạng service, đăng nhập bằng key pair) | Tài khoản riêng của GitHub Actions | Phải dùng chung tài khoản người; mật khẩu nằm trong GitHub, lộ là mất quyền |
+| Các schema `STAGING`, `INTERMEDIATE`, `MARTS` trong `RETAIL_PULSE` (tạo bằng role `TRANSFORMER`) | Để cấp quyền đọc cho CI ngay cả khi dbt chưa build lần nào | Câu `GRANT` báo lỗi vì schema chưa tồn tại |
+
+Lý do các schema ở dòng cuối do `TRANSFORMER` tạo: nếu `ACCOUNTADMIN` tạo thì chính `ACCOUNTADMIN` là chủ sở hữu
+và dbt không ghi bảng vào được.
+
+**Kiểm tra bước này đã xong:** chạy trong Snowsight `DESC USER GITHUB_CI;`. Cột `RSA_PUBLIC_KEY_FP` phải có giá
+trị dạng `SHA256:...`; ô trống nghĩa là key chưa được gắn và CI sẽ không đăng nhập được.
+
+### Bước 3. Thêm hai secret vào GitHub
+
+Vào repo, **Settings, Secrets and variables, Actions, New repository secret**. Chọn **Repository secrets**, không
+phải Environment secrets.
+
+| Tên (viết đúng, phân biệt hoa thường) | Giá trị |
+|---|---|
+| `SNOWFLAKE_ACCOUNT` | Giá trị `SNOWFLAKE_ACCOUNT` trong `.env` |
+| `CI_PRIVATE_KEY` | Toàn bộ nội dung `.snowflake/github_ci.p8`, gồm cả hai dòng `BEGIN` và `END` |
+
+- *Vì sao cần:* workflow đọc `${{ secrets.SNOWFLAKE_ACCOUNT }}` và `${{ secrets.CI_PRIVATE_KEY }}` để đăng nhập.
+  Private key chỉ nằm ở máy bạn và trong GitHub Secrets, không bao giờ nằm trong repo.
+- *Vì sao Repository mà không phải Environment:* workflow này không khai báo `environment:`, nên chỉ đọc được
+  repository secret; đặt nhầm chỗ thì giá trị rỗng và lỗi đăng nhập rất khó đoán.
+- *Nếu bỏ qua hoặc sai tên:* CI chạy đến bước dbt thì đỏ với lỗi thiếu account hoặc key.
+- *An toàn:* mở file bằng editor rồi copy, không dán key vào chat hay commit. `.snowflake/` đã nằm trong `.gitignore`.
+
+### Bước 4. Đẩy workflow lên `main` và chạy `Prod manifest`
+
+Workflow `Prod manifest` tạo bản chụp `manifest.json` của bản thật để PR sau so sánh. Nó tự chạy khi có thay đổi
+trong `dbt/**` được đẩy lên `main`. Muốn chạy tay: tab **Actions**, bấm vào **`manifest.yml`** ở cột trái (nút
+**Run workflow** chỉ hiện ở trang của từng workflow, không hiện ở trang "All workflows"), chọn nhánh `main`.
+
+- *Vì sao:* slim CI cần "bản thật trông thế nào" để biết PR đã đổi model nào.
+- *Nếu bỏ qua:* PR đầu tiên vẫn chạy được nhưng sẽ build toàn bộ (chậm, tốn credit), và từ đó mới có manifest.
+- *Lưu ý:* lần này xanh **chưa chứng minh** đăng nhập Snowflake đúng, vì `dbt parse` không kết nối. Chuyện đó
+  được kiểm tra ở bước 5.
+
+### Bước 5. Mở một PR thử
+
+Tạo nhánh, thêm một dòng chú thích vào một model (ví dụ `dim_payment_method.sql`), đẩy lên và mở PR. Kỳ vọng:
+cả `lint` lẫn `dbt-slim-ci` xanh. Xong thì **đóng PR và xóa nhánh, không merge**.
+
+- *Vì sao:* đây là lần đầu CI thật sự đăng nhập Snowflake bằng `GITHUB_CI`, tạo schema `PR_<số>_*` và dọn nó.
+- *Nếu bỏ qua:* lỗi cấu hình đầu tiên bạn thấy sẽ nằm trên một PR thật, vào lúc đang vội.
+
+### Bước 6. Bật bảo vệ nhánh `main`
+
+Làm theo mục [Cài đặt GitHub](#cài-đặt-github-làm-một-lần-trên-giao-diện-web) ở dưới.
+
+- *Vì sao để sau cùng:* ô chọn check bắt buộc (`lint`, `dbt-slim-ci`) chỉ liệt kê những check đã chạy gần đây, nên
+  phải có PR thử trước. Ngoài ra rule bảo vệ chặn push thẳng lên `main`, mà bước 4 cần đẩy workflow lên `main`.
+- *Nếu bật sớm:* không chọn được check bắt buộc, hoặc bị chặn khi đẩy workflow đầu tiên.
+
+> Giao diện GitHub và Snowsight đôi khi đổi tên nút hoặc vị trí. Nếu thấy khác mô tả, chụp màn hình rồi đối chiếu
+> với tên các mục ở trên, ý nghĩa vẫn giữ nguyên.
 
 ## Quy trình làm việc: mọi thay đổi đi qua pull request
 
