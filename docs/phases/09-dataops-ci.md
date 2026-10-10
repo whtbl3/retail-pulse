@@ -100,8 +100,15 @@ Xong thì đóng PR và xóa nhánh, không merge.
 | Trong ruleset | **Require status checks to pass**: `lint`, `dbt-slim-ci` | CI đỏ thì không merge được |
 
 Secret không được truyền cho PR từ fork (chủ ý): nếu truyền, người ngoài chỉ cần sửa workflow trong fork để in key
-ra log. `ci.yml` không có bộ lọc `paths` nên hai check luôn chạy; nếu có, PR không đụng đường dẫn đó sẽ không có
-check và bị treo chờ.
+ra log.
+
+**PR chỉ sửa tài liệu có phải chạy dbt không?** Không cần, và `ci.yml` đã xử lý: hai check `lint` và `dbt-slim-ci` luôn
+**xuất hiện** trên mọi PR, nhưng một bước đầu của job dbt kiểm tra PR có đổi `dbt/` (trừ file mẫu `*.example`), `pyproject.toml`,
+`uv.lock` hay chính `ci.yml` không; nếu không thì các bước dbt bị bỏ qua và job báo xanh sau vài giây.
+*Vì sao không lọc `paths` ở cấp workflow:* workflow bị bỏ qua thì check **ở trạng thái Pending và chặn merge**
+([GitHub: handling skipped but required checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)),
+còn job bị bỏ qua bởi điều kiện thì báo Success. *Nếu bỏ qua cách này:* PR tài liệu hoặc PR chỉ đổi Python sẽ treo mãi, hoặc
+mọi PR đều tốn thời gian chạy dbt dù không đụng dbt.
 
 > **Đọc thêm (tài liệu GitHub):** [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
 > và [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
@@ -132,7 +139,7 @@ và `git branch -D <nhánh>` (squash làm Git tưởng nhánh chưa merge).
 
 | File | Việc |
 |---|---|
-| `.github/workflows/ci.yml` | Mỗi PR: `ruff` + slim CI dbt + dọn schema |
+| `.github/workflows/ci.yml` | Mỗi PR: `ruff`; slim CI dbt + dọn schema (chỉ khi PR đổi dbt, xem trên) |
 | `.github/workflows/manifest.yml` | Mỗi lần merge đổi `dbt/**`: `dbt parse --target prod`, lưu artifact `prod-manifest` |
 | `dbt/ci/profiles.yml` | Profile CI (target `ci`, `prod`); chỉ dùng `env_var()` nên được commit |
 | `dbt/macros/generate_schema_name.sql` | Target `ci` thì thêm tiền tố `PR_<số>_` |
