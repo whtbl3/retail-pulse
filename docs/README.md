@@ -23,7 +23,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 4 | Mô phỏng thay đổi giá sản phẩm (`stream.py`) | Xong | [phases/04-product-change-simulator.md](phases/04-product-change-simulator.md) |
 | 5 | dbt: staging, SCD2, star schema | Xong | [phases/05-dbt.md](phases/05-dbt.md) |
 | 6 | Dagster orchestration | Xong | [phases/06-dagster.md](phases/06-dagster.md) |
-| 7 | Preset dashboards | Đang làm | [phases/07-preset.md](phases/07-preset.md) |
+| 7 | Preset dashboards | Xong | [phases/07-preset.md](phases/07-preset.md) |
 | 8 | Great Expectations | Tùy chọn | — |
 
 ## Thiết kế chi tiết theo thành phần
