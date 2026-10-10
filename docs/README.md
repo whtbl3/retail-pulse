@@ -24,7 +24,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 5 | dbt: staging, SCD2, star schema | Xong | [phases/05-dbt.md](phases/05-dbt.md) |
 | 6 | Dagster orchestration | Xong | [phases/06-dagster.md](phases/06-dagster.md) |
 | 7 | Preset dashboards | Xong | [phases/07-preset.md](phases/07-preset.md) |
-| 8 | Great Expectations | Tùy chọn | — |
+| 8 | Great Expectations: kiểm tra chất lượng RAW | Xong | [phases/08-great-expectations.md](phases/08-great-expectations.md) |
 
 ## Thiết kế chi tiết theo thành phần
 
@@ -43,6 +43,7 @@ make seed        # nạp ~100k giao dịch lịch sử
 make stream      # đổi giá vài sản phẩm
 make ingest      # load sang Snowflake RAW, lần đầu load hết, sau đó incremental (cần cấu hình phase 3)
 make test        # chạy toàn bộ test
+make quality     # Great Expectations kiểm tra RAW
 make help        # liệt kê mọi lệnh
 ```
 
