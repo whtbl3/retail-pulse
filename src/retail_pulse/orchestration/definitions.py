@@ -11,9 +11,11 @@ from retail_pulse.orchestration.jobs import (
     fct_sales_full_refresh_job,
     full_pipeline_job,
 )
+from retail_pulse.orchestration.quality_checks import raw_quality_checks
 
 defs = Definitions(
     assets=[retail_raw_assets, retail_dbt_assets],
+    asset_checks=raw_quality_checks,
     jobs=[full_pipeline_job, fct_sales_full_refresh_job],
     schedules=[daily_pipeline_schedule],
     resources={

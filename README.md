@@ -145,7 +145,7 @@ The same pipeline seen as the tools that implement it. Data moves left to right 
 | Dagster | Orchestrates dlt and dbt as assets | Planned |
 | Preset | BI dashboards on the marts | Planned |
 | GitHub CI | Lint, test, deploy | Planned |
-| Great Expectations | Optional data quality checks on RAW | Deferred |
+| Great Expectations | Optional data quality checks on RAW | Done |
 
 See [docs/README.md](./docs/README.md) for the phase-by-phase roadmap.
 

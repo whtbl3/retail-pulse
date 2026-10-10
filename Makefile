@@ -7,7 +7,7 @@ DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt chạy từ dbt/, nạp .env trước vì profiles.yml dùng env_var(); dùng dbt trong .venv (qua uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs dagster clean
+.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster clean
 
 help: ## Liệt kê các lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -60,6 +60,9 @@ lint: ## Ruff
 
 clean-raw: ## Xoá RAW trên Snowflake + state dlt, không hỏi xác nhận
 	uv run python -m retail_pulse.ingestion.clean --yes
+
+quality: ## Great Expectations: kiểm tra chất lượng RAW (thoát mã 1 nếu có lỗi)
+	uv run python -m retail_pulse.quality.raw_checks
 
 dbt-deps: ## Cài package dbt (dbt_utils) vào dbt/dbt_packages
 	$(DBT) deps
