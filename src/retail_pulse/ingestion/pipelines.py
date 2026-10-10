@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 
+import dlt
 from dlt.sources.sql_database import sql_database
 
-import dlt
 from retail_pulse.oltp.db import engine
 
 # Bảng có updated_at -> incremental append (không merge, rẻ hơn trên Snowflake).

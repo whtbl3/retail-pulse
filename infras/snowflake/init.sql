@@ -1,11 +1,21 @@
 -- Khởi tạo Snowflake cho RetailPulse. Chạy bằng ACCOUNTADMIN qua `make snowflake-init`
 -- (xem trước bằng `make snowflake-init-dry`). Viết để chạy lại nhiều lần không lỗi.
--- Mỗi câu lệnh kết thúc bằng dấu chấm phẩy; chỉ dùng chú thích cả dòng.
--- __DLT_LOADER_PUBLIC_KEY__, __DBT_TRANSFORMER_PUBLIC_KEY__, __GITHUB_CI_PUBLIC_KEY__ được thay bằng public key của từng user.
+--
+-- Thứ tự file:
+--   1. Chi phí và tính toán   trần credit, warehouse nhỏ tự tắt
+--   2. Database và role       nơi chứa dữ liệu, ai được làm gì
+--   3. User                   tài khoản của dlt và dbt, đăng nhập bằng key pair
+--   4. Schema của dbt         tạo sớm để cấp quyền cho CI
+--   5. CI (GitHub Actions)    môi trường riêng cho slim CI, chỉ đọc dữ liệu thật
+--
+-- Quy ước đọc file: mỗi câu lệnh kết thúc bằng dấu chấm phẩy, chỉ dùng chú thích cả dòng.
+-- Các chuỗi __<USER>_PUBLIC_KEY__ được thay bằng public key của từng user lúc chạy.
 
 USE ROLE ACCOUNTADMIN;
 
--- Giới hạn chi phí
+-- ===== 1. Chi phí và tính toán =====
+-- Resource monitor đặt trần 10 credit mỗi tháng: cảnh báo ở 80 phần trăm, tự dừng ở 100.
+-- Warehouse XSMALL tự tắt sau 60 giây không dùng và tự bật khi có truy vấn.
 CREATE RESOURCE MONITOR IF NOT EXISTS RETAIL_RM
   WITH CREDIT_QUOTA = 10 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
   TRIGGERS ON 80 PERCENT DO NOTIFY
@@ -15,10 +25,12 @@ CREATE WAREHOUSE IF NOT EXISTS RETAIL_WH
   WAREHOUSE_SIZE = XSMALL AUTO_SUSPEND = 60 AUTO_RESUME = TRUE
   INITIALLY_SUSPENDED = TRUE RESOURCE_MONITOR = RETAIL_RM;
 
+-- ===== 2. Database và role =====
+-- RAW là nơi duy nhất dlt ghi vào. Các schema của dbt được tạo ở mục 4.
 CREATE DATABASE IF NOT EXISTS RETAIL_PULSE;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.RAW;
 
--- Roles
+-- LOADER cho dlt, TRANSFORMER cho dbt. Mỗi role chỉ có quyền vừa đủ cho việc của mình.
 CREATE ROLE IF NOT EXISTS LOADER;
 CREATE ROLE IF NOT EXISTS TRANSFORMER;
 GRANT ROLE LOADER TO ROLE SYSADMIN;
@@ -38,7 +50,9 @@ GRANT USAGE ON SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
 GRANT SELECT ON ALL TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
 GRANT SELECT ON FUTURE TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
 
--- User cho dlt (xác thực bằng key pair)
+-- ===== 3. User =====
+-- Cả hai user đều đăng nhập bằng key pair (không mật khẩu) và là loại SERVICE.
+-- User cho dlt: DLT_LOADER, role LOADER.
 CREATE USER IF NOT EXISTS DLT_LOADER
   TYPE = SERVICE
   DEFAULT_ROLE = LOADER
@@ -46,7 +60,7 @@ CREATE USER IF NOT EXISTS DLT_LOADER
 ALTER USER DLT_LOADER SET RSA_PUBLIC_KEY = '__DLT_LOADER_PUBLIC_KEY__';
 GRANT ROLE LOADER TO USER DLT_LOADER;
 
--- User cho dbt (xác thực bằng key pair riêng, role TRANSFORMER)
+-- User cho dbt: DBT_TRANSFORMER, role TRANSFORMER, key pair riêng.
 CREATE USER IF NOT EXISTS DBT_TRANSFORMER
   TYPE = SERVICE
   DEFAULT_ROLE = TRANSFORMER
@@ -54,15 +68,18 @@ CREATE USER IF NOT EXISTS DBT_TRANSFORMER
 ALTER USER DBT_TRANSFORMER SET RSA_PUBLIC_KEY = '__DBT_TRANSFORMER_PUBLIC_KEY__';
 GRANT ROLE TRANSFORMER TO USER DBT_TRANSFORMER;
 
--- Các schema của dbt: TRANSFORMER tạo (làm chủ sở hữu) để dbt ghi được, và để cấp quyền đọc cho CI bên dưới
--- mà không phải đợi lần dbt build đầu tiên.
+-- ===== 4. Schema của dbt =====
+-- Phải do role TRANSFORMER tạo để dbt là chủ sở hữu và ghi được bảng vào đó. Tạo sớm để mục 5
+-- cấp được quyền đọc cho CI mà không phải đợi lần dbt build đầu tiên.
 USE ROLE TRANSFORMER;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.STAGING;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.INTERMEDIATE;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.MARTS;
 USE ROLE ACCOUNTADMIN;
 
--- CI (GitHub Actions, slim CI cho dbt): chỉ GHI vào database riêng RETAIL_PULSE_CI, chỉ ĐỌC dữ liệu thật.
+-- ===== 5. CI (GitHub Actions, slim CI cho dbt) =====
+-- CI chỉ GHI vào database riêng RETAIL_PULSE_CI và chỉ ĐỌC dữ liệu thật. Warehouse và resource monitor
+-- riêng để một workflow chạy sai không đốt credit của pipeline thật.
 CREATE RESOURCE MONITOR IF NOT EXISTS RETAIL_CI_RM
   WITH CREDIT_QUOTA = 2 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
   TRIGGERS ON 80 PERCENT DO NOTIFY

@@ -3,15 +3,13 @@
 | Field | Value |
 | --- | --- |
 | Status | Active |
-| Version | 1.1 |
-| Last updated | 2026-10-06 |
-| Current implementation priority | dbt project (phase 5) |
+| Version | 1.2 |
+| Last updated | 2026-10-11 |
 
 ## 1. Document Purpose
 
 This document is the canonical product and technical specification for RetailPulse. It records
-the agreed project scope, architecture, data contracts, implementation status, and acceptance
-criteria. Implementation work should follow this specification unless a later decision explicitly
+the agreed project scope, architecture, data contracts, and acceptance criteria. Implementation work should follow this specification unless a later decision explicitly
 supersedes it.
 
 RetailPulse is an existing project. Changes must build on the current repository and preserve the
@@ -65,7 +63,8 @@ version, and the main pipeline behaviors are covered by focused tests and docume
 | Transformation | dbt Core with dbt-snowflake | Owns warehouse transformation and SCD logic |
 | Orchestration | Dagster | Integrates dlt and dbt assets |
 | BI | Preset | Reads analytics-ready mart models |
-| Optional data quality | Great Expectations | RAW checks before dbt (phase 8) |
+| Data quality on RAW | Great Expectations | Runs before dbt as blocking Dagster asset checks (phase 8) |
+| CI | GitHub Actions | Lint and dbt slim CI on a separate Snowflake database (phase 9) |
 
 Replacing a finalized technology is out of scope unless the project owner explicitly requests it.
 
@@ -82,6 +81,8 @@ flowchart LR
     DAG["Dagster"] -. orchestrates .-> GEN
     DAG -. orchestrates .-> RAW
     DAG -. orchestrates .-> STG
+    GE["Great Expectations<br/>RAW checks"] -. blocks dbt on failure .-> RAW
+    CI["GitHub Actions<br/>lint + dbt slim CI"] -. validates changes .-> STG
 ```
 
 The warehouse follows a light medallion structure and uses Kimball-style dimensional marts:
@@ -116,7 +117,7 @@ The following are intentionally excluded:
 - inventory modeling;
 - `fact_inventory_snapshot`;
 - Kubernetes;
-- enterprise-scale operational complexity; and
+- enterprise-scale operational complexity;
 - return and cancellation analysis; and
 - SCD history implemented in Python source generators.
 
@@ -190,6 +191,8 @@ requested.
 `stream.py` simulates low-frequency, realistic source-side changes to existing products and to the
 store assignment of existing employees (store transfer). Its output provides incremental source
 changes for dlt and, later, successive versions for the product and employee history in dbt.
+Only when asked (`--sales N`), it also inserts new sales transactions so that the incremental path of
+the fact can be exercised.
 
 It is a lightweight change simulator, not a reseed tool and not a high-volume event generator.
 
@@ -197,7 +200,8 @@ It is a lightweight change simulator, not a reseed tool and not a high-volume ev
 
 The simulator must:
 
-1. operate only on existing rows in `retail.product` and `retail.employee`;
+1. operate on existing rows in `retail.product` and `retail.employee`, and insert new rows only in
+   `retail.sales_transaction` and `retail.sales_transaction_item` when `--sales` is requested;
 2. update `unit_cost` as the normal change type;
 3. update `unit_price` less frequently than `unit_cost`;
 4. select a small subset of products per cycle;
@@ -210,8 +214,11 @@ The simulator must:
 11. provide a one-cycle mode suitable for tests, demos, and orchestration;
 12. optionally repeat cycles with a configurable interval;
 13. support deterministic selection and change values when a random seed is supplied;
-14. report enough information to identify the cycle and changed products; and
-15. exit with a clear message when no products exist.
+14. report enough information to identify the cycle and changed products;
+15. exit with a clear message when no products exist; and
+16. when `--sales N` is requested, insert N new transactions inside store opening hours (07:00-22:00
+    local time) after the latest existing transaction, using the same sales rules as `seed.py`,
+    before applying the price changes of the same cycle.
 
 #### Default Behavior
 
@@ -220,15 +227,16 @@ Defaults must favor safe local demonstration:
 - one cycle unless continuous behavior is explicitly requested;
 - a small number of products per cycle;
 - cost-only changes in most cases;
-- price changes controlled by a low probability; and
+- price changes controlled by a low probability;
 - a small number of employees (default one) transferred per cycle, only active employees
-  (`end_date` is null), always to a store different from the current one; and
-- no inserts, deletes, or changes to tables other than `product` and `employee`, and no employee
-  changes other than `store_id`.
+  (`end_date` is null), always to a store different from the current one;
+- no deletes, and no inserts unless `--sales` is requested; and
+- no changes to tables other than `product` and `employee` (plus new rows in the two sales tables
+  with `--sales`), and no employee changes other than `store_id`.
 
-Exact CLI flag names, numeric bounds, default batch size, price-change probability, and interval
-remain implementation details until `stream.py` is implemented. They must be documented in
-`--help` and covered by tests once chosen.
+CLI flag names, numeric bounds, defaults, price-change probability, and interval are documented in
+`--help` and in [phases/04-product-change-simulator.md](phases/04-product-change-simulator.md), and are
+covered by tests.
 
 #### Failure and Transaction Behavior
 
@@ -244,17 +252,20 @@ Given a seeded database, one simulator cycle is accepted when:
 - the configured number of distinct existing products is updated, capped by the available count;
 - most changed rows have a different `unit_cost`;
 - `unit_price` changes only according to the configured low-probability rule;
-- no table other than `retail.product` and `retail.employee` is changed;
+- no table other than `retail.product` and `retail.employee` is changed (new sales rows only when
+  `--sales` is requested);
 - every transferred employee moves to a different existing store and receives a newer `updated_at`;
 - product identity and classification fields remain unchanged;
 - every changed row receives a newer `updated_at` from PostgreSQL;
 - all monetary constraints remain valid;
+- with `--sales N`, the new transactions fall inside store opening hours and after the latest
+  existing transaction;
 - the command terminates after one cycle by default; and
 - the same initial data and random seed produce the same selected products and values.
 
 Unit tests should cover calculation, rounding, bounds, deterministic random behavior, and argument
 validation. A PostgreSQL integration test should cover persistence, trigger-driven `updated_at`,
-transaction rollback, and the product-only scope.
+transaction rollback, and the table scope.
 
 ## 9. Ingestion Specification
 
@@ -305,7 +316,7 @@ Staging models must provide source-aligned cleanup and type normalization withou
 business logic. Intermediate models are optional and should exist only for reusable transformations.
 Mart models must expose stable analytics contracts to Preset.
 
-### 10.2 Planned Gold Models
+### 10.2 Gold Models
 
 The dimensional design (business process, grain, dimensions, facts, SCD types, fact type) is in
 [analytical-data-modeling.md](design/analytical-data-modeling.md); that document is authoritative
@@ -313,7 +324,7 @@ for model details.
 
 | Model | Grain | History strategy |
 | --- | --- | --- |
-| `fact_sales` | One completed transaction item | Transaction fact, no SCD |
+| `fct_sales` | One completed transaction item | Transaction fact, no SCD |
 | `dim_product` | One product version | SCD Type 2 |
 | `dim_employee` | One employee version | SCD Type 2 |
 | `dim_store` | One store | Type 1 |
@@ -322,15 +333,20 @@ for model details.
 | `dim_promotion` | One promotion, plus `-1` "No promotion" | Type 1 |
 | `dim_payment_method` | One payment method | Type 1 |
 
+Models follow the `stg_`, `int_`, `fct_` and `dim_` naming convention. Surrogate keys are 64-bit integers
+produced by the Snowflake `HASH` function (macro `surrogate_key`); `-1` and `-2` are reserved values.
 Every dimension has an `-2` "Unknown" member. `transaction_id` and `line_number` are degenerate
-dimensions in `fact_sales`. An aggregate transaction-grain mart and a promotion-coverage factless
+dimensions in `fct_sales`. An aggregate transaction-grain mart and a promotion-coverage factless
 fact are candidates for later and are not part of the current scope.
 
 ### 10.3 Fact Sales Contract
 
-`fact_sales` uses transaction-item grain and contains only `completed` transactions. It keeps
+`fct_sales` uses transaction-item grain and contains only `completed` transactions. It keeps
 `transaction_id`, `line_number` and `transaction_ts`, and has keys for date, time, product, store,
 employee, payment method and promotion.
+
+`date_key` and `time_key` are computed from local time (`Asia/Ho_Chi_Minh`); `transaction_ts` stays in
+UTC for the SCD2 range joins.
 
 Measures: `quantity`, `regular_price`, `unit_cost`, `gross_amount`, `discount_amount`,
 `coupon_amount`, `net_amount`, `cost_amount`, `gross_profit`. All are additive except the two unit
@@ -348,7 +364,9 @@ prices. Ratios such as gross margin are metrics in the BI layer, not fact column
 The model is loaded incrementally on (`transaction_id`, `line_number`). Orders are treated as
 immutable once written; a status change after load is out of scope. dbt tests must check `net_amount >= 0` and
 `discount_amount <= gross_amount`. Known limit: a past correction at the source (such as a cost
-fix) does not update the fact until a full refresh.
+fix) does not update the fact until a full refresh. The same applies to rows assigned the `-2` key
+because their dimension row arrived late: they are fixed with `dbt build -s fct_sales --full-refresh`,
+never by refreshing RAW.
 
 ### 10.4 SCD Type 2 Ownership
 
@@ -378,22 +396,29 @@ Consequences:
 
 ## 11. Orchestration Specification
 
-Dagster is introduced after ingestion and dbt models work independently. It must represent dlt and
-dbt work as observable assets and preserve their native responsibilities.
+Dagster is introduced after ingestion and dbt models work independently. It represents dlt and dbt work
+as observable assets and preserves their native responsibilities.
 
-The initial orchestration scope is:
+Delivered scope:
 
-1. run the PostgreSQL-to-Snowflake dlt ingestion;
-2. run dbt models (including SCD2 dimensions) after successful ingestion;
-3. run dbt tests after the models build; and
-4. expose run status and materialization metadata through Dagster.
+1. run the PostgreSQL-to-Snowflake dlt ingestion, one asset per RAW table;
+2. run Great Expectations checks on the incremental RAW tables as blocking asset checks, so dbt does
+   not run on RAW data that fails them;
+3. run dbt models (including SCD2 dimensions) after successful ingestion;
+4. run dbt tests after the models build (dbt `build`; tests appear as asset checks); and
+5. expose run status and materialization metadata through Dagster.
 
-Scheduling frequency, retry policy, sensors, alerting, and deployment topology are TBD. The product
-simulator must be runnable independently and may later be scheduled as a separate upstream step.
+Jobs: `full_pipeline` (dlt, then dbt build) and `fct_sales_full_refresh` (`dbt build --full-refresh` for
+`fct_sales` only; run manually; never touches RAW). Schedule: `full_pipeline` runs daily at 23:00
+`Asia/Ho_Chi_Minh`, after store closing hours. If ingestion fails, dbt does not run.
+
+Retry policy, sensors, alerting, and deployment topology are TBD. The product simulator must be runnable
+independently and may later be scheduled as a separate upstream step.
 
 ## 12. BI Specification
 
-Preset must query dbt mart models, not PostgreSQL or raw dlt tables. Initial dashboard subjects are:
+Preset must query dbt mart models, not PostgreSQL or raw dlt tables, through a read-only `REPORTER` role
+limited to `SELECT` on `MARTS`. Dashboard subjects are:
 
 - revenue and sales trends;
 - product and category performance;
@@ -401,8 +426,9 @@ Preset must query dbt mart models, not PostgreSQL or raw dlt tables. Initial das
 - promotion effectiveness; and
 - gross margin over time using historical product cost.
 
-Dashboard layout, exact metrics, filters, and refresh expectations are TBD until mart contracts are
-finalized.
+Delivered: the dashboard `RetailPulse Sales Overview` with five charts (net revenue by month, by
+category and by store; promotion impact; gross profit by month) and two filters (store, time range),
+all labels in English. Data is as fresh as the last daily `full_pipeline` run.
 
 ## 13. Quality Attributes
 
@@ -429,11 +455,11 @@ At minimum, tests should cover:
 - accepted categorical values;
 - source relationship integrity;
 - non-negative monetary measures;
-- transaction-item grain in `fact_sales`;
+- transaction-item grain in `fct_sales`;
 - valid and non-overlapping SCD2 intervals per business key; and
 - fact-to-dimension referential integrity.
 
-dbt tests are required for transformed models. Great Expectations is optional and validates RAW before dbt runs (phase 8).
+dbt tests are required for transformed models. Great Expectations validates the incremental RAW tables before dbt runs (phase 8).
 
 ### 13.4 Security and Cost Control
 
@@ -441,19 +467,25 @@ dbt tests are required for transformed models. Great Expectations is optional an
 - dlt uses the least-privilege `LOADER` role.
 - dbt uses a separate transformation role.
 - Snowflake development resources should remain small and auto-suspend when idle.
+- Preset uses a separate read-only role (`REPORTER`).
+- CI uses a dedicated database, warehouse, and role (`RETAIL_PULSE_CI`, `RETAIL_CI_WH`, `CI_RUNNER`) with
+  read-only access to the real data and a resource monitor.
+- Changes reach `main` only through pull requests with required status checks.
 
-## 14. Delivery Phases and Current Status
+## 14. Delivery Phases
 
-| Phase | Deliverable | Status |
-| --- | --- | --- |
-| 1 | PostgreSQL schema, ORM, and Docker Compose | Complete |
-| 2 | Historical seed generator | Complete |
-| 3 | dlt full and incremental ingestion to Snowflake RAW | Complete and working |
-| 4 | Source change simulator (product price/cost, employee store transfer) | Complete |
-| 5 | dbt project, sources, staging, SCD2 models, and marts | Pending |
-| 6 | Dagster asset orchestration | Pending |
-| 7 | Preset dashboards | Pending |
-| 8 | Great Expectations extension | Done (RAW checks, blocking asset checks in Dagster) |
+| Phase | Deliverable |
+| --- | --- |
+| 0 | Development environment (uv, Docker, repository layout) |
+| 1 | PostgreSQL schema, ORM, and Docker Compose |
+| 2 | Historical seed generator |
+| 3 | dlt full and incremental ingestion to Snowflake RAW |
+| 4 | Source change simulator (product price/cost, employee store transfer, optional new sales) |
+| 5 | dbt project, sources, staging, SCD2 models, and marts |
+| 6 | Dagster asset orchestration (assets, jobs, schedule) |
+| 7 | Preset dashboards |
+| 8 | Great Expectations checks on RAW (blocking asset checks in Dagster) |
+| 9 | GitHub Actions: lint and dbt slim CI, branch protection |
 
 ## 15. Repository Contracts
 
@@ -465,9 +497,15 @@ Existing implementation locations:
 - `src/retail_pulse/oltp/models.py`: ORM schema;
 - `src/retail_pulse/generator/common.py`: shared random source and money rounding;
 - `src/retail_pulse/generator/seed.py`: historical seed generation;
-- `src/retail_pulse/generator/stream.py`: product and employee change simulator;
+- `src/retail_pulse/generator/stream.py`: product and employee change simulator, optional new sales;
 - `src/retail_pulse/ingestion/pipelines.py`: dlt source and pipeline;
 - `src/retail_pulse/ingestion/clean.py`: dlt/Snowflake cleanup operations;
+- `src/retail_pulse/ingestion/snowflake_init.py` and `infras/snowflake/init.sql`: Snowflake warehouse, database, roles, users, and the CI environment;
+- `src/retail_pulse/orchestration/`: Dagster assets, jobs, schedule, and blocking quality checks;
+- `src/retail_pulse/quality/`: Great Expectations checks on RAW;
+- `dbt/`: dbt project (models, tests, macros) and `dbt/ci/profiles.yml` for CI;
+- `.github/workflows/`: CI (`ci.yml`) and production manifest (`manifest.yml`);
+- `.env.example`, `.dlt/secrets.toml.example`, `dbt/profiles.yml.example`: configuration templates (real files are never committed);
 - `tests/`: pytest suites; `conftest.py` provisions a disposable PostgreSQL test database;
 - `docs/README.md`: documentation index and phase roadmap;
 - `docs/phases/`: per-phase run and verification guides;
@@ -498,7 +536,7 @@ resulting analytics in Preset.
 | --- | --- | --- |
 | Docker Compose only; no Kubernetes | Final | Appropriate operational scope for a portfolio project |
 | dlt for PostgreSQL-to-Snowflake ingestion | Final | Existing implementation is working |
-| Transaction-item grain for `fact_sales` | Final | Supports granular POS analysis |
+| Transaction-item grain for `fct_sales` | Final | Supports granular POS analysis |
 | Product and employee as SCD Type 2 | Final | Their changes affect historical interpretation |
 | Other dimensions static or Type 1 | Final | Additional history is not justified by current scope |
 | dbt models over append-only RAW rows own SCD history; no `dbt snapshot` | Final | RAW already holds every version; window functions are idempotent and rebuildable |
@@ -508,6 +546,12 @@ resulting analytics in Preset.
 | Analytics consider `completed` transactions only | Final | Return/cancellation analysis is out of scope |
 | Inventory and customer domains excluded | Final | Prevents unnecessary project expansion |
 | Incremental ingestion before CDC | Final | Delivers a coherent end-to-end path before advanced expansion |
+| `date_key` and `time_key` use local time (`Asia/Ho_Chi_Minh`); `transaction_ts` stays UTC | Final | Computed in UTC, daytime sales were labeled as night |
+| Rows with the `-2` key are fixed by `dbt build -s fct_sales --full-refresh`, never by refreshing RAW | Final | Simple and enough at this scale; RAW is the only history store |
+| `full_pipeline` runs daily at 23:00; the full-refresh job is manual | Final | Stores close at 22:00; a full rebuild is only needed after late-arriving data |
+| Great Expectations checks on RAW block dbt | Final | dbt tests run after models are built; bad RAW data should stop the run earlier |
+| Dashboard labels in English only | Final | Source data is English; mixing languages confuses readers |
+| Every change reaches `main` through a pull request; CI runs dbt on a separate database | Final | CI must not touch real data and must gate merges |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.

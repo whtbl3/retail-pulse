@@ -1,72 +1,113 @@
-# Operational Data Modeling
+# Mô hình dữ liệu vận hành (OLTP)
 
-Thiết kế nguồn OLTP (PostgreSQL): Conceptual → Logical (3NF) → Physical. Phần tiếp theo (mô hình
-phân tích cho warehouse) nằm ở [analytical-data-modeling.md](analytical-data-modeling.md).
-DDL thực tế: `infras/postgres/init/01_schema.sql`.
+Trước khi nghĩ đến warehouse, phải hiểu dữ liệu **nguồn** trông thế nào. Một hệ thống bán hàng (POS) ghi mỗi hóa đơn
+trong vài mili giây, nên nó được thiết kế để **ghi nhanh và không sai**, chứ không để phân tích. Bài này đi qua ba bước thiết
+kế nguồn PostgreSQL: Conceptual → Logical (3NF) → Physical. Phần tiếp theo, mô hình cho warehouse, nằm ở
+[analytical-data-modeling.md](analytical-data-modeling.md). DDL thật: `infras/postgres/init/01_schema.sql`.
 
-## 1. Conceptual Model
-First step, consisting of the conceptual modeling phase, allows us to conceptualize and define the overall structure and relationships within the database. This involves identifying the key entities, their attributes, and their associations. Through careful analysis and collaboration with stakeholders, we will capture the essence of the management system and translate it into a concise and comprehensive conceptual model (Figure 1).   In the conceptual model in Figure 1, we can observe four entities: Store, Employee, Product, and Promotion, connected through two key events: Buy and Stocks. The primary event, Buy, enables us to track sales transactions at retail stores through cashiers while applying active promotions. (Keep in mind, capturing detailed POS transaction attributes such as Date, Payment method, Quantity, Regular price, and Coupon amount is essential for pricing and promotion analytics.) The second event, Stocks, is designed as a periodic snapshot event to track inventory levels (Quantity on hand) across stores over time (Snapshot date). Note that while the Stocks event is included in this conceptual model to accommodate broader supply chain design, it is currently out of scope and not utilized in this specific analytics case. For each entity and event, we have defined specific attributes to build a comprehensive operational database. Look Figure 1 below.
+## 1. Conceptual: có những thứ gì, nối với nhau ra sao
 
-![Figure 1. Conceptual Model Diagram](../../assets/diagrams/Conceptual_Model_Modeling.drawio.svg)
+Bước đầu chưa nói gì đến bảng hay cột. Ta chỉ hỏi: nghiệp vụ này có những **thực thể** nào, và những **sự kiện** nào nối
+chúng lại?
 
-## 2. Logical Model
-As we previously mentioned, to convert the conceptual ERD into a logical schema, we create a structured representation of entities, attributes, and their relationships. This schema acts as a foundation for implementing the database in a relational database management system. We turn the entities into tables, with their attributes becoming table columns. Relationships are handled based on their cardinality: for 1:N relationships, we use foreign keys to connect tables, and for M:N relationships, we create separate associative tables to represent the connections. Furthermore, by strictly applying normalization principles up to the Third Normal Form (3NF), we eliminate data redundancy, prevent update anomalies, and ensure data integrity.
+Ở đây có bốn thực thể: **Store** (cửa hàng), **Employee** (nhân viên), **Product** (sản phẩm) và **Promotion** (khuyến mãi),
+nối với nhau qua hai sự kiện:
 
-![Figure 2. Logical Model Diagram](../../assets/diagrams/Logical_Model_Diagram.drawio.svg)
+- **Buy** (mua hàng): một nhân viên thu ngân bán sản phẩm tại một cửa hàng, có thể áp một khuyến mãi đang hiệu lực. Mỗi lần bán
+  phải ghi đủ thời điểm, phương thức thanh toán, số lượng, giá niêm yết và coupon, vì đó là nguyên liệu để phân tích giá và
+  khuyến mãi.
+- **Stocks** (tồn kho): ảnh chụp định kỳ số lượng tồn của từng cửa hàng. Sự kiện này có trong mô hình để chừa chỗ cho chuỗi
+  cung ứng về sau, nhưng **nằm ngoài phạm vi** của dự án và không được dùng.
 
-If we apply these normalization rules to our concept, we obtain the logical schema illustrated in Figure 3.
+![Hình 1. Mô hình Conceptual](../../assets/diagrams/Conceptual_Model_Modeling.drawio.svg)
 
-![Figure 3. Logical Model Diagram 3NF](../../assets/diagrams/Logical_Model_Diagram_Normalize_3NF.drawio.svg)
-As you can see, our logical model consists of ten normalized tables:
-- Core Entities & Lookups: Primary entities such as Store, employee, product, and promotion store main domain data. To achieve 3NF and remove transitive dependencies, attributes like categories, brands, and payment methods are normalized into standalone lookup tables (category, brand, and payment_method).
-- Transaction Processing (Header & Detail Split): The core POS sales event (Buy) is decomposed into two tables—sales_transaction for high-level transaction metadata (store, employee cashier, payment method, and timestamp) and sales_transaction_item for line-item details (SKU, quantity, regular price, line number, and coupon amount)—preventing data duplication across multiple items per bill.
-- Association Tables: The promotion_product table resolves the M:N relationship between products and promotions
+Đọc thêm: [Entity–relationship model](https://en.wikipedia.org/wiki/Entity%E2%80%93relationship_model).
 
-## 3. Physical Model
-While the logical model primarily deals with the structural representation of the database, the physical model delves into the practical aspects of data management, assuming we have chosen a specific database engine. In our case, we select PostgreSQL for its robust support for transactional integrity, strict data typing, and financial decimal precision. Thus, we need to translate our 3NF logical model into specific physical storage configurations, PostgreSQL data types, and integrity constraints.
-Figure 4 shows our physical ERD diagram, detailing PostgreSQL data types, column nullability (NN for NOT NULL), primary keys, and foreign key relationships.
-Now we can translate the previous logical model into a set of DDL scripts, starting by defining custom ENUM types and establishing our database structure (Example 1).
+## 2. Logical: biến thành bảng, rồi chuẩn hóa đến 3NF
 
-![Figure 4. Physical Model](../../assets/diagrams/Physical_Model_Diagram.drawio.svg)
+Từ sơ đồ conceptual sang logical là một phép dịch cơ học:
+- Thực thể thành **bảng**, thuộc tính thành **cột**.
+- Quan hệ 1:N thành **khóa ngoại**.
+- Quan hệ M:N thành một **bảng trung gian**.
+
+![Hình 2. Mô hình Logical (chưa chuẩn hóa)](../../assets/diagrams/Logical_Model_Diagram.drawio.svg)
+
+Rồi áp dụng chuẩn hóa đến **dạng chuẩn 3 (3NF)**. Nói đơn giản: mỗi thông tin chỉ được lưu **một chỗ**. Đổi tên một nhãn hàng
+thì sửa đúng một dòng, không phải sửa hàng nghìn dòng sản phẩm. *Nếu không chuẩn hóa:* dữ liệu lặp lại, sửa chỗ này quên chỗ
+kia, và hai dòng cùng nói về một thứ có thể mâu thuẫn nhau.
+
+![Hình 3. Mô hình Logical sau khi chuẩn hóa 3NF](../../assets/diagrams/Logical_Model_Diagram_Normalize_3NF.drawio.svg)
+
+Kết quả là **mười bảng**, chia thành ba nhóm:
+
+| Nhóm | Bảng | Ghi chú |
+|---|---|---|
+| Thực thể và danh mục | `store`, `employee`, `product`, `promotion` + `category`, `brand`, `payment_method` | Danh mục, nhãn hàng, phương thức thanh toán được tách thành bảng riêng để loại phụ thuộc bắc cầu (đạt 3NF) |
+| Giao dịch (tách header và chi tiết) | `sales_transaction`, `sales_transaction_item` | Header giữ thông tin cả hóa đơn (cửa hàng, thu ngân, thanh toán, thời điểm); chi tiết giữ từng dòng hàng. Tách ra để một hóa đơn nhiều dòng không phải lặp lại thông tin header |
+| Bảng trung gian | `promotion_product` | Giải quyết quan hệ M:N giữa sản phẩm và khuyến mãi |
+
+Đọc thêm: [Third normal form](https://en.wikipedia.org/wiki/Third_normal_form).
+
+## 3. Physical: chọn PostgreSQL và viết thành ràng buộc
+
+Logical chỉ nói *cái gì* được lưu. Physical trả lời *lưu bằng gì và giữ cho đúng bằng cách nào*. Dự án chọn **PostgreSQL** vì
+nó hỗ trợ giao dịch chặt chẽ, kiểu dữ liệu nghiêm ngặt và số thập phân chính xác cho tiền.
+
+![Hình 4. Mô hình Physical](../../assets/diagrams/Physical_Model_Diagram.drawio.svg)
+
+Điều đáng nói nhất ở tầng này là những **ràng buộc** để dữ liệu sai bị chặn ngay từ cửa vào, trước khi nó trôi xuống warehouse.
+Dưới đây là hai bảng bán hàng và bảng khuyến mãi trích từ DDL thật:
 
 ```sql
--- Define enumerated types for restricted categorical attributes
-CREATE TYPE promotion_type AS ENUM ('percentage', 'fixed_amount');
-CREATE TYPE transaction_status AS ENUM ('completed', 'cancelled', 'returned');
-
--- Create core lookup entities
-CREATE TABLE IF NOT EXISTS store (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_name VARCHAR(100) NOT NULL UNIQUE,
-    address VARCHAR(255) NOT NULL,
-    phone_number VARCHAR(20),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE promotion (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    type        VARCHAR(20) NOT NULL CHECK (type IN ('percentage', 'fixed_amount')),
+    amount      NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+    start_date  DATE NOT NULL,
+    end_date    DATE NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_promotion_dates   CHECK (end_date >= start_date),
+    CONSTRAINT chk_promotion_percent CHECK (type <> 'percentage' OR amount <= 100)
 );
 
-CREATE TABLE IF NOT EXISTS category (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    category_name VARCHAR(100) NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS brand (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    brand_name VARCHAR(100) NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS payment_method (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    method VARCHAR(50) NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE sales_transaction_item (
+    transaction_id  BIGINT NOT NULL REFERENCES sales_transaction (transaction_id) ON DELETE CASCADE,
+    line_number     SMALLINT NOT NULL CHECK (line_number > 0),
+    product_id      BIGINT NOT NULL REFERENCES product (id),
+    promotion_id    BIGINT,                                   -- NULL = không khuyến mãi
+    quantity        INTEGER NOT NULL CHECK (quantity > 0),
+    regular_price   NUMERIC(12, 2) NOT NULL CHECK (regular_price >= 0),   -- giá tại thời điểm bán
+    coupon_amount   NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (coupon_amount >= 0),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (transaction_id, line_number),
+    CONSTRAINT fk_item_promotion_product
+        FOREIGN KEY (product_id, promotion_id)
+        REFERENCES promotion_product (product_id, promotion_id)
 );
 ```
-The sales_transaction table records high-level POS receipt metadata, while sales_transaction_item records granular line items. The line-item table utilizes a composite primary key consisting of (transaction_id, line_number), ensuring ordinal integrity for every receipt item. Foreign key constraints maintain strict referential integrity. Crucially, the ON DELETE CASCADE clause on fk_item_transaction guarantees that if a transaction record is purged, its corresponding detail lines are automatically cleaned up to prevent orphan rows.
 
-Across all tables, created_at and updated_at columns with timezone-aware timestamps (TIMESTAMPTZ) serve as audit columns. Including audit timestamps is an operational best practice: it enables downstream data pipelines to perform incremental extraction and Change Data Capture (CDC) via log-based or query-based replication tools (such as Debezium or Airflow incremental DAGs) without requiring full database dumps.
+| Ràng buộc | Bảo đảm điều gì | Nếu thiếu |
+|---|---|---|
+| Khóa chính ghép `(transaction_id, line_number)` | Không có hai dòng cùng số thứ tự trong một hóa đơn | Dòng chi tiết trùng, doanh thu đếm đôi |
+| `ON DELETE CASCADE` ở `transaction_id` | Xóa hóa đơn thì các dòng chi tiết đi theo, không để dòng mồ côi | Xóa hóa đơn bị khóa ngoại từ chối, phải xóa tay từng dòng chi tiết trước |
+| Khóa ngoại ghép `(product_id, promotion_id)` tới `promotion_product` | Áp khuyến mãi cho sản phẩm không thuộc chương trình đó. Khi `promotion_id` rỗng thì bỏ qua kiểm tra | Giảm giá sai sản phẩm lọt vào dữ liệu |
+| `CHECK (amount <= 100)` khi là `percentage` | Giảm giá trên 100% | Doanh thu âm |
+| `NUMERIC(12, 2)` cho tiền | Sai số làm tròn của số thực | Cộng dồn lệch từng đồng |
+| `CHECK` cho trạng thái và loại khuyến mãi (`VARCHAR` thay vì `ENUM`) | Giá trị lạ như `refunded` | Giá trị lạ đi sâu vào dữ liệu. Dùng `CHECK` thay `ENUM` để đổi tập giá trị chỉ cần sửa một ràng buộc, không phải `ALTER TYPE` |
 
-Understanding physical database design, data type selection, and constraint enforcement equips data engineers and analytics professionals with the necessary context to optimize downstream ELT/ETL jobs, diagnose query performance bottlenecks, and design robust data lakehouse ingestion layers.
+### Cột kiểm toán và nạp dữ liệu incremental
+
+Mọi bảng đều có `created_at` và `updated_at` (`TIMESTAMPTZ`, có múi giờ), và một **trigger** tự cập nhật `updated_at` mỗi khi
+dòng bị UPDATE. Nghe nhàm chán nhưng đây là nền móng của cả pipeline phía sau: dlt dùng `updated_at` làm con trỏ để chỉ nạp phần
+mới ([phase 3](../phases/03-ingestion-snowflake.md)), và dbt dựng lịch sử SCD2 từ các phiên bản có `updated_at` khác nhau
+([phase 5](../phases/05-dbt.md)). Bốn bảng nạp incremental (`sales_transaction`, `sales_transaction_item`, `product`, `employee`) có index trên `updated_at` để truy vấn "dòng nào mới hơn mốc X" nhanh.
+
+*Nếu bỏ qua:* một UPDATE không đổi `updated_at` thì dlt không thấy thay đổi, RAW lệch nguồn mà không báo lỗi.
+
+Dự án dùng cách nạp theo truy vấn này (query-based incremental). Một lựa chọn khác là CDC dựa trên log (như Debezium) bắt từng thay
+đổi trung gian, nhưng CDC nằm ngoài phạm vi hiện tại; `wal_level=logical` được bật sẵn trong `docker-compose.yml` để dành cho sau.
+
+Đọc thêm: [PostgreSQL: ràng buộc](https://www.postgresql.org/docs/16/ddl-constraints.html),
+[trigger bằng PL/pgSQL](https://www.postgresql.org/docs/16/plpgsql-trigger.html).
