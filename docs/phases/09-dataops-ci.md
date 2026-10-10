@@ -3,6 +3,30 @@
 Mục tiêu: mỗi pull request tự kiểm tra thay đổi dbt mà **không đụng dữ liệu thật** và **không build lại
 toàn bộ**. Khớp khối "GitHub CI" trong [README gốc](../../README.md).
 
+## Bối cảnh: vì sao cần CI/CD
+
+Hình dung chuyện này. Bạn sửa `dim_product` rồi push thẳng lên `main`. Hơn 23:00 Dagster tự chạy. Model có lỗi
+logic nhưng không báo đỏ, chỉ cho ra số sai. Sáng hôm sau dashboard hiện doanh thu lệch và bạn phải lần ngược xem
+thay đổi nào gây ra. Nếu có một bước kiểm tra **trước khi** thay đổi vào `main`, lỗi đã bị chặn từ đầu.
+
+- **CI (Continuous Integration, tích hợp liên tục):** mỗi thay đổi được máy tự kiểm tra trước khi nhập vào
+  `main`. Giống nhà hàng thử món mới ở bếp thử rồi mới đưa lên thực đơn, thay vì thử trên khách.
+- **CD (Continuous Delivery, giao liên tục):** tự đưa bản đã kiểm tra lên nơi chạy thật. Dự án này **mới có CI,
+  chưa có CD**: sau khi merge, "deploy" là `git pull` rồi khởi động lại Dagster bằng tay.
+
+**Vì sao dữ liệu khó hơn code thường**, và đó cũng là lý do bảng thiết kế bên dưới có những dòng như vậy:
+1. Lỗi dữ liệu thường **không làm chương trình chết**, chỉ làm số sai. Nên CI phải chạy cả `dbt test`, không chỉ
+   kiểm tra cú pháp.
+2. Kiểm tra dữ liệu cần **dữ liệu thật** để chạy, mà không được phá nó. Nên cần database CI riêng và user chỉ có
+   quyền đọc bản thật.
+3. Build lại toàn bộ mỗi PR vừa chậm vừa tốn credit Snowflake. Nên có slim CI, chỉ build phần bị đổi.
+
+Nối với kiến thức cũ: `dbt test` bạn đã viết ở phase 5 chính là "bài kiểm tra"; CI chỉ là cách tự động chạy chúng
+đúng lúc, trên mọi thay đổi. `ref()` tạo DAG nên dbt biết sửa model nào thì phần nào bị ảnh hưởng.
+
+**Khi nào KHÔNG cần:** dự án thử nghiệm một người, không có ai dùng dashboard, thì `make dbt-build` ở máy là đủ.
+Dự án này làm CI vì là portfolio (cần thể hiện quy trình đúng) và vì repo public.
+
 ## Slim CI là gì
 Build lại toàn bộ dbt cho mỗi PR thì chậm và tốn credit. Slim CI chỉ build **model bị sửa và mọi model phụ
 thuộc vào chúng** (`state:modified+`); model không đổi thì đọc từ bản thật (`--defer`).
