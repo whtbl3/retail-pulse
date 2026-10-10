@@ -75,4 +75,14 @@ mở một PR thử có sửa một model để xem slim CI chạy.
 đúng `RETAIL_PULSE_CI.PR_7_marts`; target dev vẫn ghi `RETAIL_PULSE.marts` (không đổi hành vi);
 toàn bộ test Python vẫn đạt (53).
 
-**Chưa kiểm chứng:** việc chạy thật trên GitHub Actions và trên Snowflake (cần bước thiết lập ở trên).
+**Đã chạy thật trên GitHub Actions và Snowflake:** `make snowflake-init` tạo xong môi trường CI (user `GITHUB_CI`
+có key, database `RETAIL_PULSE_CI`, role `CI_RUNNER`); workflow `Prod manifest` xanh và lưu artifact; PR thử chỉ
+thêm một dòng chú thích vào `dim_payment_method.sql` cho kết quả `lint` và `dbt-slim-ci` đều xanh (dbt build 17 giây,
+dọn schema 5 giây).
+
+**Hai lỗi gặp khi chạy thật (đã sửa):**
+- `runner.temp` không dùng được ở `env` của job (chỉ dùng trong step) nên GitHub báo "Invalid workflow file". Sửa
+  bằng `$RUNNER_TEMP` trong step ghi key, rồi đặt biến đường dẫn qua `$GITHUB_ENV`. Nên chạy `actionlint` trước khi
+  push workflow.
+- `.gitignore` chặn mọi `profiles.yml` nên `dbt/ci/profiles.yml` suýt không lên GitHub. Thêm
+  `!dbt/ci/profiles.yml` (file này chỉ có `env_var()`, không có bí mật).
