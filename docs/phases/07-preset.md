@@ -10,7 +10,7 @@ PostgreSQL hay RAW. Bố cục, chỉ số và bộ lọc chi tiết còn TBD, s
 | 2 | Tạo tài khoản và workspace Preset | Xong |
 | 3 | Kết nối Snowflake từ Preset | Xong (qua SQLAlchemy URI) |
 | 4 | Khai báo dataset từ các bảng mart | Xong (`sales_enriched`) |
-| 5 | Dựng chart và dashboard | Đang làm (đã có chart doanh thu theo tháng) |
+| 5 | Dựng chart và dashboard | Xong (dashboard `RetailPulse Sales Overview`, 5 chart, 2 bộ lọc) |
 
 ## Bước 1 — Role chỉ đọc cho Preset
 
@@ -95,7 +95,7 @@ Vào **SQL**, chọn database `RetailPulse`, schema `marts`, chạy:
 SELECT
   d.full_date, d.year, d.month, d.month_name, d.day_name, d.is_weekend,
   s.store_name,
-  p.product_name, p.category_id,
+  p.product_name, p.category_name, p.brand_name,
   pr.promotion_label, pr.promotion_type,
   f.transaction_id, f.quantity,
   f.gross_amount, f.discount_amount, f.coupon_amount,
@@ -119,9 +119,10 @@ JOIN RETAIL_PULSE.MARTS.DIM_PROMOTION pr ON f.promotion_key = pr.promotion_key
 
 Dòng khóa `-2` hiện là "Unknown", `-1` ở promotion là "No promotion". Nhãn dùng tiếng Anh.
 
-**Giới hạn hiện tại:** `dim_product` chỉ có `category_id` và `brand_id`, không có tên danh mục hay nhãn
-hàng, nên chart theo danh mục chỉ hiện mã số. Muốn hiện tên, thêm cột tên vào `dim_product` ở dbt
-(join `stg_category`, `stg_brand`), rồi `dbt build` lại và làm mới dataset trong Preset.
+**Tên danh mục và nhãn hàng:** ban đầu `dim_product` chỉ có `category_id`/`brand_id` nên chart theo danh mục
+chỉ hiện mã số. Đã thêm `category_name` và `brand_name` vào `dim_product` (join `stg_category`,
+`stg_brand`, Type 1: lấy tên hiện tại), `dbt build -s dim_product+` pass. Sau thay đổi này, sửa câu SQL
+của dataset `sales_enriched` như trên rồi **Save** lại để Preset nhận cột mới.
 
 ## Bước 5 — Chart và dashboard
 
@@ -150,6 +151,51 @@ Cấu hình: X-axis `FULL_DATE`, Time Grain `Month`, Metric `SUM(NET_AMOUNT)`.
 Đọc chart: doanh thu quanh 3 đến 3,8 tỷ mỗi tháng. Hai điểm hai đầu thấp hơn là **tháng chưa đủ ngày**:
 điểm đầu là tháng dữ liệu bắt đầu, điểm cuối (tháng 10/2026) mới chạy được vài ngày. Không phải lỗi pipeline.
 Khi làm dashboard nên lọc bỏ tháng hiện tại hoặc ghi chú để người xem không hiểu nhầm là doanh thu sụt.
+
+### Các chart còn lại
+
+Mọi chart dùng dataset `sales_enriched`. Với chart cột theo nhóm, cột phân loại đặt ở **X-axis**
+(ô **Dimensions** chỉ dùng để tách thêm màu trong mỗi cột).
+
+| Chart | Loại | Cấu hình |
+|---|---|---|
+| Net revenue by category | Bar | X-axis `CATEGORY_NAME`, metric `SUM(NET_AMOUNT)`, sort giảm dần |
+| Net revenue by store | Bar | X-axis `STORE_NAME`, metric `SUM(NET_AMOUNT)` |
+| Promotion impact | Bar | X-axis `PROMOTION_LABEL`, metrics `SUM(NET_AMOUNT)` và `SUM(DISCOUNT_AMOUNT)`, lọc `PROMOTION_LABEL <> 'No promotion'`, row limit 20 |
+| Gross profit by month | Line | X-axis `FULL_DATE` (Month), metric `SUM(GROSS_PROFIT)` |
+
+![Chart doanh thu theo danh mục, hiện tên danh mục nhờ category_name trong dim_product](../../assets/diagrams/preset-chart-category.png)
+
+### Dashboard
+
+**Dashboards, + Dashboard**, tên `RetailPulse Sales Overview`, **Edit dashboard**, kéo chart từ tab
+**Charts** vào khung, thêm hai bộ lọc ở thanh bên trái: **Value** trên `STORE_NAME` và **Time range**
+trên `FULL_DATE`. **Save**, rồi **Publish**.
+
+![Dashboard RetailPulse Sales Overview](../../assets/diagrams/preset-dashboard-overview.png)
+
+### Đối soát số liệu với warehouse
+
+Dashboard chỉ đáng tin khi khớp với bảng nguồn. Đã kiểm tra bằng `PRESET_READER`:
+
+| Chỉ số | Giá trị trong `FCT_SALES` | Trên dashboard |
+|---|---|---|
+| Tổng `net_amount` | 42,53 tỷ | Tổng các cột theo danh mục, theo cửa hàng và các điểm theo tháng đều cộng ra khoảng 42,5 tỷ |
+| Tổng `gross_profit` | 12,51 tỷ (biên gộp 29,4%) | Chart theo tháng quanh 0,8 đến 1,1 tỷ mỗi tháng |
+
+Ba cách chia (theo danh mục, cửa hàng, tháng) cùng cộng ra một tổng, nghĩa là join dimension không làm mất
+hay nhân đôi dòng fact.
+
+### Điều cần biết khi đọc dashboard
+- **Tháng đầu và tháng cuối thấp hơn** vì chưa đủ ngày (tháng cuối là tháng hiện tại). Không phải lỗi
+  pipeline. Bộ lọc **Time range** giúp loại hai tháng này.
+- **Promotion impact chỉ có 8 cột dù có 40 khuyến mãi.** Chart nhóm theo `promotion_label` (ví dụ
+  "10% off"), nhiều chương trình dùng chung một nhãn nên bị gộp. Muốn xem từng chương trình thì thêm cột
+  tên/mã chương trình vào `dim_promotion`.
+- **Doanh thu giữa 10 cửa hàng gần như bằng nhau (khoảng 4,2 tỷ).** Đó là đặc điểm của dữ liệu giả do
+  generator sinh ra, không phải lỗi mô hình.
+- Dashboard còn một chart tên mặc định `sales_enriched_chart` (doanh thu theo tháng, tạo lúc bấm
+  *Save & Explore*). Nên đổi tên thành `Net revenue by month`.
 
 ## Lưu ý
 - Số liệu chỉ mới khi `full_pipeline` chạy (23:00 hằng ngày, xem [phase 6](06-dagster.md)); Preset chỉ đọc
