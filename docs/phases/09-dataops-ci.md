@@ -12,6 +12,9 @@ Bạn sửa `dim_payment_method` rồi push thẳng lên `main`. Lúc 23:00 Dags
 - **CD:** tự đưa bản đã kiểm tra lên nơi chạy thật. Dự án này **mới có CI**; deploy là `git pull` rồi khởi động
   lại Dagster bằng tay.
 
+> **Đọc thêm:** [Continuous Integration (Martin Fowler)](https://martinfowler.com/articles/continuousIntegration.html), bài
+> kinh điển giải thích CI là gì và vì sao mọi người nên nhập code vào nhánh chính thường xuyên.
+
 Dữ liệu khác code thường ở ba điểm, và thiết kế bên dưới trả lời từng điểm:
 - Lỗi chỉ làm số sai chứ không làm chương trình chết, nên CI phải chạy cả `dbt test`.
 - Test cần dữ liệu thật nhưng không được phá nó, nên có database CI riêng, chỉ đọc bản thật.
@@ -25,6 +28,11 @@ dbt so `manifest.json` của PR với manifest của bản thật để biết m
 dbt build --select state:modified+ --defer --state <thư mục chứa manifest của bản thật>
 ```
 
+> **Đọc thêm (tài liệu dbt):** [Best practices for workflows](https://docs.getdbt.com/best-practices/best-practice-workflows)
+> (mục chạy chỉ model đã đổi, tức slim CI), [Node selector methods](https://docs.getdbt.com/reference/node-selection/methods)
+> (`state:modified` hoạt động thế nào) và [Defer](https://docs.getdbt.com/reference/node-selection/defer)
+> (`--defer` và `--state`).
+
 Ví dụ PR số 7 sửa `dim_payment_method`:
 - **Được build:** `dim_payment_method`, `fct_sales` (dùng dimension này) và 30 test của chúng. Ghi vào
   `RETAIL_PULSE_CI.PR_7_MARTS`, không đụng bản thật.
@@ -36,6 +44,7 @@ Ví dụ PR số 7 sửa `dim_payment_method`:
 - **Không build:** 6 dimension còn lại, toàn bộ staging và intermediate. Nhờ `--defer`, `ref()` tới chúng trỏ về
   bản thật (`RETAIL_PULSE.marts.dim_product`...). Vì vậy user CI phải có quyền **đọc** schema thật.
 - **Dọn dẹp:** bước cuối xóa schema `PR_7_*`. PR số 8 chạy song song dùng `PR_8_*`, hai PR không đè nhau.
+  Tên schema theo PR do macro `generate_schema_name` quyết định; xem [Custom schemas](https://docs.getdbt.com/docs/build/custom-schemas).
 
 Danh sách trên lấy từ `dbt ls --select state:modified+` chạy ở máy với đúng thay đổi của PR thử; log chi tiết của
 GitHub cần đăng nhập nên không đọc được từ ngoài.
@@ -56,12 +65,16 @@ Tạo ra: database `RETAIL_PULSE_CI` (nơi CI ghi), warehouse `RETAIL_CI_WH` v�
 bằng key pair, file `.snowflake/github_ci.p8`).
 *Vì sao:* tách riêng để CI lỗi không thể đè dữ liệu thật hay đốt hết credit.
 *Kiểm tra:* `DESC USER GITHUB_CI;` có `RSA_PUBLIC_KEY_FP` dạng `SHA256:...`.
+> **Đọc thêm (tài liệu Snowflake):** [Key-pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth)
+> (đăng nhập bằng key thay mật khẩu) và [Resource monitors](https://docs.snowflake.com/en/user-guide/resource-monitors)
+> (đặt trần credit, tự dừng warehouse).
 
 **3. Thêm hai secret vào GitHub.** Settings, Secrets and variables, Actions, New **repository** secret:
 `SNOWFLAKE_ACCOUNT` (giống `.env`) và `CI_PRIVATE_KEY` (toàn bộ nội dung `.snowflake/github_ci.p8`, gồm dòng
 BEGIN/END).
 *Vì sao:* workflow đọc hai secret này để đăng nhập. Phải là repository secret vì workflow không khai `environment:`;
 đặt vào Environment thì giá trị rỗng. Không dán key vào chat hay commit.
+> **Đọc thêm:** [Using secrets in GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
 
 **4. Chạy workflow `Prod manifest`.** Tab Actions, bấm `manifest.yml` ở cột trái, **Run workflow**, chọn `main`.
 *Vì sao:* tạo manifest bản thật (artifact `prod-manifest`) để PR so sánh. Thiếu thì PR đầu tiên build toàn bộ.
@@ -90,10 +103,20 @@ Secret không được truyền cho PR từ fork (chủ ý): nếu truyền, ng�
 ra log. `ci.yml` không có bộ lọc `paths` nên hai check luôn chạy; nếu có, PR không đụng đường dẫn đó sẽ không có
 check và bị treo chờ.
 
+> **Đọc thêm (tài liệu GitHub):** [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
+> và [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+> (từng rule ở bảng trên), [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
+> (vì sao phải cẩn thận với PR từ fork) và [Pull request merges](https://docs.github.com/en/pull-requests/reference/pull-request-merges)
+> (squash merge).
+
 ## Làm việc hằng ngày (trunk-based)
 
 Một nhánh chính `main`; mỗi việc một nhánh ngắn (vài giờ đến vài ngày), PR nhỏ, CI xanh thì merge. Không dùng
 GitFlow (`develop`, `release`): nặng nề, chỉ hợp khi phát hành theo chu kỳ.
+
+> **Đọc thêm:** [Trunk Based Development](https://trunkbaseddevelopment.com/) và riêng phần
+> [Short-lived feature branches](https://trunkbaseddevelopment.com/short-lived-feature-branches/); với người đã quen
+> GitHub thì xem [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow).
 
 ```bash
 git switch main && git pull
