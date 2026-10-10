@@ -73,6 +73,13 @@ Trong một lần chạy:
 3. Bước cuối `drop_ci_schemas` xóa cả bốn schema `PR_7_*`. Bỏ qua bước này thì mỗi PR để lại một đống schema
    mồ côi trong `RETAIL_PULSE_CI`, tốn dung lượng và rối khi cần tìm.
 
+**Đã tái hiện ở máy** (dbt dựng manifest từ `main`, rồi thêm đúng dòng chú thích như PR thử và chạy
+`dbt ls --select state:modified+`): dbt chọn **2 model** (`dim_payment_method`, `fct_sales`) cùng **30 test** của
+chúng. Sáu dimension còn lại (`dim_product`, `dim_employee`, `dim_store`, `dim_promotion`, `dim_date`, `dim_time`)
+và toàn bộ staging, intermediate **không** được build mà đọc từ bản thật (ví dụ `RETAIL_PULSE.marts.dim_product`).
+Các test `relationships` từ `fct_sales` tới những dimension đó vẫn chạy được nhờ `--defer`. Đây là tái hiện chứ
+không phải log thật, vì log chi tiết của GitHub Actions bắt buộc đăng nhập mới xem được.
+
 PR số 8 mở song song thì dùng `PR_8_*`, hai PR không đè nhau. Nếu mọi PR dùng chung một schema, PR này build có thể
 xóa bảng mà PR kia đang test và cho kết quả đỏ vô lý.
 
@@ -177,6 +184,10 @@ có bộ lọc, PR không đụng đường dẫn đó sẽ không có check, v�
   dòng, nhẹ). Đây cũng là cách kiểm tra lần build từ đầu.
 - **Action chưa ghim theo mã commit** (`actions/checkout@v4`...). Best practice mạnh hơn là ghim SHA và để
   Dependabot cập nhật.
+- **GitHub Actions báo hai thông báo ở mỗi lần chạy** (không làm CI đỏ): cảnh báo `actions/checkout@v4` và
+  `astral-sh/setup-uv@v5` còn dùng Node.js 20 (đã bị chạy ép trên Node.js 24), và thông báo nhãn `ubuntu-latest`
+  sẽ chuyển sang Ubuntu 26 từ 19/10/2026. Chưa cần sửa ngay; nếu CI bỗng hỏng sau ngày đó thì thử ghim
+  `runs-on: ubuntu-24.04` trước.
 - Chưa có `sqlfluff lint` và `pytest` trong CI: `pytest` cần manifest và profile dbt, `sqlfluff` với templater
   dbt cần kết nối. Thêm khi cần.
 
