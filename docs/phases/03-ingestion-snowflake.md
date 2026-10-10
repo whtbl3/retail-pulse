@@ -35,7 +35,7 @@ auto-suspend 60 giây, database `RETAIL_PULSE`, schema `RAW`, role `LOADER` và 
 `DLT_LOADER` cho dlt và `DBT_TRANSFORMER` cho dbt, đều xác thực bằng key pair). File viết để chạy lại nhiều lần không lỗi.
 
 ```bash
-make snowflake-init-dry   # in 25 câu lệnh, không kết nối Snowflake
+make snowflake-init-dry   # in các câu lệnh, không kết nối Snowflake
 # Chưa có key trong .snowflake/ thì snowflake-init tự tạo cặp mới (hoặc suy .pub từ .p8 có sẵn).
 # Private key của dlt đặt trong .dlt/secrets.toml; của dbt là .snowflake/dbt_transformer.p8.
 # Đặt SNOWFLAKE_ADMIN_USER và SNOWFLAKE_ADMIN_PASSWORD (tài khoản ACCOUNTADMIN) trong .env hoặc export.

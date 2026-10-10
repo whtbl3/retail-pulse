@@ -1,0 +1,38 @@
+# Sau mỗi lần merge vào main: lưu manifest.json của bản thật để PR sau so sánh (state:modified).
+name: Prod manifest
+
+on:
+  push:
+    branches: [main]
+    paths: ["dbt/**", ".github/workflows/manifest.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      CI_PRIVATE_KEY_PATH: ${{ runner.temp }}/ci_key.p8
+      DBT_PROFILES_DIR: dbt/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - name: Ghi private key ra file tạm
+        env:
+          CI_PRIVATE_KEY: ${{ secrets.CI_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$CI_PRIVATE_KEY" > "$CI_PRIVATE_KEY_PATH"
+      - run: uv run dbt deps --project-dir dbt
+      - run: uv run dbt parse --project-dir dbt --target prod
+        env:
+          CI_SCHEMA: unused
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prod-manifest
+          path: dbt/target/manifest.json
+          retention-days: 30

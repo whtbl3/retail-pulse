@@ -1,0 +1,64 @@
+# Mỗi pull request: lint Python, rồi slim CI cho dbt (chỉ build model đổi + model phụ thuộc vào nó).
+name: CI
+
+on:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read # tải manifest từ lần chạy trước
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+
+  dbt-slim-ci:
+    runs-on: ubuntu-latest
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      CI_PRIVATE_KEY_PATH: ${{ runner.temp }}/ci_key.p8
+      CI_SCHEMA: PR_${{ github.event.pull_request.number }}
+      DBT_PROFILES_DIR: dbt/ci
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - name: Ghi private key ra file tạm
+        env:
+          CI_PRIVATE_KEY: ${{ secrets.CI_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$CI_PRIVATE_KEY" > "$CI_PRIVATE_KEY_PATH"
+      - run: uv run dbt deps --project-dir dbt
+
+      - name: Tải manifest của bản thật (nếu đã có)
+        run: |
+          RUN_ID=$(gh run list --workflow=manifest.yml --branch=main --status=success \
+            --limit=1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$RUN_ID" ]; then
+            gh run download "$RUN_ID" --name prod-manifest --dir state
+          fi
+
+      - name: dbt build (slim nếu có manifest, ngược lại build toàn bộ)
+        run: |
+          if [ -f state/manifest.json ]; then
+            uv run dbt build --project-dir dbt --select state:modified+ --defer --state "$GITHUB_WORKSPACE/state"
+          else
+            echo "Chưa có manifest của bản thật, build toàn bộ."
+            uv run dbt build --project-dir dbt
+          fi
+
+      - name: Dọn schema của PR
+        if: always()
+        run: uv run dbt run-operation drop_ci_schemas --project-dir dbt
