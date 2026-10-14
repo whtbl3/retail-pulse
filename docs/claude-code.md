@@ -13,6 +13,7 @@ before the later steps (quality gates in CI, a spec for each feature, review, op
 | `.claude/settings.json` | Permissions (allow, ask, deny) and hooks | Enforced by Claude Code; Claude cannot skip them on its own |
 | `.claude/hooks/protect_secrets.py` | Hook that blocks edits to secret files | Before every time Claude edits or creates a file |
 | `.claude/hooks/ruff_after_edit.py` | Hook that formats and lints Python files | After every time Claude edits a `.py` file |
+| `.claude/skills/new-feature/SKILL.md` | Steps for starting a feature from a spec | Only when you type `/new-feature` (see [spec-driven-development.md](spec-driven-development.md)) |
 
 The most important boundary: `CLAUDE.md` and rules are **advice**; Claude can forget or misread them.
 Settings and hooks are **law**; they run as code, so they always hold. Anything that must be true at all times needs a law behind it.
@@ -101,5 +102,5 @@ will show up as untracked; move them to `~/.claude/` or add them to `.gitignore`
 
 - Claude repeats the same mistake: add a line to `CLAUDE.md` (or to a rule if it only concerns one area of the code).
 - A rule in `CLAUDE.md` is ignored even though it is clearly written: turn it into a hook or a deny/ask rule.
-- A repeated multi-step process (for example adding a dbt model): write it as a skill in `.claude/skills/` (step 3 of the roadmap).
+- A repeated multi-step process (for example adding a dbt model): write it as a skill in `.claude/skills/`, like `new-feature`.
 - Personal preferences that do not apply to the whole repo: put them in `.claude/settings.local.json` or `~/.claude/`, not in the shared files.

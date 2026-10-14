@@ -38,6 +38,8 @@ Before calling a change done, run `make check` and show the output.
 - Every change reaches `main` through a pull request with green `lint`, `test` and `dbt-slim-ci` checks.
   Fill in the PR template checklist (Definition of Done, spec §16).
   Branch names: `feat/...`, `fix/...`, `docs/...`. Commit messages: `feat: ...`, `fix: ...`, `docs: ...`.
+- A new feature (behavior, data contract or Final decision change) starts with `/new-feature` and a
+  spec in `specs/NNN-*/` that a person approves before code. Fixes and docs skip it. See `specs/README.md`.
 - Use plan mode for changes that touch several files or an unfamiliar area. Skip it when the diff fits
   in one sentence.
 - A change to a decision marked Final must update the decision log (spec §17), the affected acceptance

@@ -510,8 +510,10 @@ Existing implementation locations:
 - `docs/README.md`: documentation index and phase roadmap;
 - `docs/phases/`: per-phase run and verification guides;
 - `docs/design/`: component design and implementation notes;
-- `CLAUDE.md` and `.claude/` (settings, hooks, rules): Claude Code instructions and guardrails, explained in
+- `CLAUDE.md` and `.claude/` (settings, hooks, rules, skills): Claude Code instructions and guardrails, explained in
   `docs/claude-code.md`;
+- `specs/`: one folder per feature (`spec.md`, `plan.md`, `tasks.md`) from `specs/_template/`, explained in
+  `docs/spec-driven-development.md`;
 - `Makefile`: local developer commands; and
 - `pyproject.toml`: package metadata, commands, dependencies, and tool configuration.
 
@@ -554,6 +556,7 @@ resulting analytics in Preset.
 | Great Expectations checks on RAW block dbt | Final | dbt tests run after models are built; bad RAW data should stop the run earlier |
 | Dashboard labels in English only | Final | Source data is English; mixing languages confuses readers |
 | Every change reaches `main` through a pull request; CI runs dbt on a separate database | Final | CI must not touch real data and must gate merges |
+| New features start from a spec in `specs/NNN-*/` approved before code; Spec Kit is trialled, not adopted | Final | Catches a wrong problem statement before the code; a light template fits the project size |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.
