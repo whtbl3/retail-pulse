@@ -40,6 +40,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | Topic | Document |
 |---|---|
 | Claude Code: `CLAUDE.md`, permissions and hooks in `.claude/` | [claude-code.md](claude-code.md) |
+| Spec-driven development: Intent issue, `specs/`, `/new-feature` skill, trying Spec Kit | [spec-driven-development.md](spec-driven-development.md), [specs/README.md](../specs/README.md) |
 
 ## Quick start
 
