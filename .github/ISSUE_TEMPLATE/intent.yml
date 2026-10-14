@@ -1,0 +1,41 @@
+name: Intent
+description: Propose a new feature. Describe the problem and the outcome, not the solution.
+title: "Intent: "
+labels: ["intent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An intent is the first step of a feature (see `specs/README.md`). Keep it short.
+        Once it is agreed, run `/new-feature <this issue number>` in Claude Code to draft the spec.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is wrong or missing today, and who notices it?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What will be true when this is done? How would you check it?
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What this feature deliberately does not do.
+  - type: input
+    id: spec-sections
+    attributes:
+      label: Project-Spec sections
+      description: Sections of docs/Project-Spec.md this likely touches, if you know (for example §9.2).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This is in scope under Project-Spec §6 and does not silently change a Final decision in §17.
+          required: true
