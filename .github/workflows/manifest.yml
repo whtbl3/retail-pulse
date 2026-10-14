@@ -1,4 +1,4 @@
-# Sau mỗi lần merge vào main: lưu manifest.json của bản thật để PR sau so sánh (state:modified).
+# After every merge to main: save the production manifest.json so later PRs can compare against it (state:modified).
 name: Prod manifest
 
 on:
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - name: Ghi private key ra file tạm
+      - name: Write the private key to a temp file
         env:
           CI_PRIVATE_KEY: ${{ secrets.CI_PRIVATE_KEY }}
         run: |

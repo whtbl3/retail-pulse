@@ -47,7 +47,7 @@ CONFIG = SeedConfig(
 
 
 def fake_ids(dataset) -> PersistedIds:
-    """ID giả theo thứ tự, thay cho bước insert (để test phần không I/O)."""
+    """Sequential fake IDs in place of the insert step (to test the I/O-free part)."""
 
     def numbered(keys, offset):
         return {k: offset + i for i, k in enumerate(keys)}
@@ -63,7 +63,7 @@ def fake_ids(dataset) -> PersistedIds:
     )
 
 
-# ---------------------------------------------------------------- unit (không cần DB)
+# ---------------------------------------------------------------- unit (no DB needed)
 def test_reference_generator_is_deterministic():
     first = ReferenceDataGenerator(CONFIG, RandomSource(CONFIG.seed)).generate()
     second = ReferenceDataGenerator(CONFIG, RandomSource(CONFIG.seed)).generate()
@@ -163,7 +163,7 @@ def test_seed_inserts_transactions_near_target(seeded, db_session):
     assert seeded.inserted_transactions == tx_count
     assert seeded.inserted_line_items == item_count
     assert abs(tx_count - CONFIG.transactions) / CONFIG.transactions < 0.15
-    assert 2 < item_count / tx_count < 4  # trung bình ~2,8 dòng mỗi đơn
+    assert 2 < item_count / tx_count < 4  # ~2.8 lines per order on average
 
 
 def test_product_name_matches_brand(seeded, db_session):
@@ -175,7 +175,7 @@ def test_product_name_matches_brand(seeded, db_session):
 
 
 def test_transactions_reference_consistent_entities(seeded, db_session):
-    # Nhân viên bán hàng thuộc đúng cửa hàng và đang làm việc vào ngày bán
+    # The salesperson belongs to the store and is employed on the sale date
     bad_employee = db_session.scalar(
         text(
             """
@@ -189,7 +189,7 @@ def test_transactions_reference_consistent_entities(seeded, db_session):
     )
     assert bad_employee == 0
 
-    # Mỗi đơn có ít nhất 1 dòng hàng, line_number liên tục từ 1
+    # Every order has at least 1 line, line_number contiguous from 1
     bad_lines = db_session.scalar(
         text(
             """
@@ -204,7 +204,7 @@ def test_transactions_reference_consistent_entities(seeded, db_session):
     )
     assert bad_lines == 0
 
-    # Giá trên dòng hàng là giá sản phẩm lúc bán; promotion còn hiệu lực vào ngày bán
+    # The line price is the product price at sale time; the promotion is active on the sale date
     bad_items = db_session.scalar(
         text(
             """
@@ -221,7 +221,7 @@ def test_transactions_reference_consistent_entities(seeded, db_session):
     )
     assert bad_items == 0
 
-    # Không có khóa ngoại "mồ côi" (DB đã chặn, kiểm tra lại cho chắc ở mức dữ liệu)
+    # No "orphan" foreign keys (the DB already blocks them; double-check at the data level)
     orphans = db_session.scalar(
         text(
             """
@@ -242,8 +242,8 @@ def test_transaction_dates_within_configured_window(seeded, db_session):
     days = Counter(ts.astimezone(TZ).date() for ts, _ in rows)
     assert min(days) >= CONFIG.start_date
     assert max(days) <= CONFIG.end_date
-    assert len(days) == CONFIG.days  # ngày nào cũng có đơn
-    assert all(7 <= ts.astimezone(TZ).hour <= 21 for ts, _ in rows)  # giờ mở cửa
+    assert len(days) == CONFIG.days  # every day has orders
+    assert all(7 <= ts.astimezone(TZ).hour <= 21 for ts, _ in rows)  # opening hours
     assert all(updated >= ts for ts, updated in rows)
 
 
@@ -253,12 +253,12 @@ def test_seed_refuses_existing_data_unless_reset(seeded, session_factory, db_ses
         "transaction_ts, status), ',' ORDER BY transaction_id)) FROM retail.sales_transaction"
     )
     before = db_session.scalar(fingerprint)
-    db_session.rollback()  # nhả lock đọc, nếu không TRUNCATE của --reset sẽ phải chờ
+    db_session.rollback()  # release the read lock, otherwise the --reset TRUNCATE would wait
 
     with pytest.raises(SystemExit):
         SeedCoordinator.from_config(CONFIG, session_factory).run()
 
-    # Reset + cùng seed -> dữ liệu y hệt
+    # Reset + same seed -> identical data
     SeedCoordinator.from_config(replace(CONFIG, reset=True), session_factory).run()
     assert db_session.scalar(fingerprint) == before
     assert count(db_session, Store) == CONFIG.stores

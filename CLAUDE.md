@@ -46,7 +46,6 @@ Before calling a change done, run `make check` and show the output.
 
 ## Language
 
-- Project-Spec, this file and `.claude/` are in English.
-- Code comments, docstrings, `docs/phases/`, `docs/design/` and commit messages are in Vietnamese.
-  Keep standard technical terms (staging, incremental, SCD2) in English.
+- Everything in the repo is in English: code comments, docstrings, log and CLI messages, docs, dbt
+  descriptions, PR descriptions and commit messages.
 - Dashboard labels and dbt column values are English only.

@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker
 
 
 class PostgresSettings(BaseSettings):
-    """Đọc từ biến môi trường hoặc .env với tiền tố PG_ (PG_HOST, PG_USER, ...)."""
+    """Read from environment variables or .env with the PG_ prefix (PG_HOST, PG_USER, ...)."""
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="PG_", extra="ignore")
 

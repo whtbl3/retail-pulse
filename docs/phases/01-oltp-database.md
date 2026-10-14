@@ -1,51 +1,51 @@
-# Phase 1 — PostgreSQL OLTP
+# Phase 1: PostgreSQL OLTP
 
-Mục tiêu: dựng CSDL nguồn dạng 3NF mô phỏng hệ thống POS bán lẻ.
-Vì sao thiết kế như vậy (conceptual → logical → physical): [Mô hình dữ liệu vận hành](../design/operational-data-modeling.md).
+Goal: build a 3NF source database that simulates a retail POS system.
+Why it is designed this way (conceptual → logical → physical): [Operational data modeling](../design/operational-data-modeling.md).
 
-## Thành phần
+## Components
 
-| File | Vai trò |
+| File | Role |
 |---|---|
-| `infras/docker-compose.yml` | Container `postgres:16` |
-| `infras/postgres/init/01_schema.sql` | DDL: schema `retail`, ràng buộc, index, trigger `updated_at` |
-| `src/retail_pulse/oltp/db.py` | Đọc cấu hình `PG_*` từ `.env`, tạo `engine` và `SessionLocal` |
-| `src/retail_pulse/oltp/models.py` | ORM model khớp với DDL |
+| `infras/docker-compose.yml` | `postgres:16` container |
+| `infras/postgres/init/01_schema.sql` | DDL: `retail` schema, constraints, indexes, `updated_at` trigger |
+| `src/retail_pulse/oltp/db.py` | Reads the `PG_*` settings from `.env`, creates `engine` and `SessionLocal` |
+| `src/retail_pulse/oltp/models.py` | ORM models that match the DDL |
 
-`docker-compose.yml` bật sẵn `wal_level=logical` để dành cho CDC sau này; hiện chưa dùng vì CDC nằm ngoài phạm vi.
+`docker-compose.yml` already sets `wal_level=logical`, reserved for CDC later. It is not used yet because CDC is out of scope.
 
-## Quy ước của mọi bảng
+## Conventions for every table
 
-| Quy ước | Vì sao | Nếu bỏ qua |
+| Convention | Why | If skipped |
 |---|---|---|
-| Khóa chính `BIGINT GENERATED ALWAYS AS IDENTITY` | Khóa tự tăng, ứng dụng không tự đặt | Khóa trùng hoặc đặt tay sai |
-| `created_at` và `updated_at` (`TIMESTAMPTZ`), trigger tự cập nhật `updated_at` khi UPDATE | `updated_at` là cursor để dlt nạp incremental | UPDATE không đổi `updated_at` thì dlt không thấy thay đổi, RAW lệch nguồn |
-| Tiền dùng `NUMERIC(12, 2)` kèm `CHECK (>= 0)` | Số thập phân chính xác; chặn tiền âm từ nguồn | `float` cho sai số cộng dồn; dữ liệu âm lọt vào analytics |
+| Primary key `BIGINT GENERATED ALWAYS AS IDENTITY` | Auto-increment key; the application never sets it | Duplicate keys or wrong hand-set keys |
+| `created_at` and `updated_at` (`TIMESTAMPTZ`), a trigger updates `updated_at` on UPDATE | `updated_at` is the cursor dlt uses for incremental loads | If an UPDATE does not change `updated_at`, dlt misses the change and RAW drifts from the source |
+| Money uses `NUMERIC(12, 2)` with `CHECK (>= 0)` | Exact decimals; blocks negative money at the source | `float` accumulates rounding errors; negative values leak into analytics |
 
-## Chạy
+## Run
 
 ```bash
-make up        # bật Postgres, chờ healthcheck
-make psql      # mở psql vào retail_oltp
-make down      # tắt container, giữ dữ liệu
-make db-reset  # tạo lại DB từ 01_schema.sql
+make up        # start Postgres, wait for the healthcheck
+make psql      # open psql on retail_oltp
+make down      # stop the container, keep the data
+make db-reset  # recreate the DB from 01_schema.sql
 ```
 
-`01_schema.sql` chỉ chạy khi volume còn trống, nên sau khi sửa DDL phải `make db-reset`.
-**`make db-reset` xóa luôn RAW trên Snowflake và state dlt**, không chỉ volume Postgres. RAW giữ lịch sử SCD2 nên
-chỉ chạy khi chấp nhận mất lịch sử đó.
+`01_schema.sql` only runs when the volume is empty, so after editing the DDL you must run `make db-reset`.
+**`make db-reset` also deletes RAW on Snowflake and the dlt state**, not just the Postgres volume. RAW holds the SCD2
+history, so only run it if you accept losing that history.
 
-## Kiểm tra
+## Check
 
 ```sql
-\dt retail.*                       -- 10 bảng
+\dt retail.*                       -- 10 tables
 SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_%_updated_at';
 ```
 
-## Đọc thêm
+## Further reading
 
-- [PostgreSQL: trigger bằng PL/pgSQL](https://www.postgresql.org/docs/16/plpgsql-trigger.html): cách trigger `updated_at` hoạt động.
-- [PostgreSQL: kiểu số](https://www.postgresql.org/docs/16/datatype-numeric.html): vì sao dùng `NUMERIC` cho tiền.
+- [PostgreSQL: trigger functions in PL/pgSQL](https://www.postgresql.org/docs/16/plpgsql-trigger.html): how the `updated_at` trigger works.
+- [PostgreSQL: numeric types](https://www.postgresql.org/docs/16/datatype-numeric.html): why money uses `NUMERIC`.
 - [Docker Compose](https://docs.docker.com/compose/).
 
-Tiếp theo: [Phase 2 — Seed dữ liệu lịch sử](02-historical-seed.md).
+Next: [Phase 2: Historical data seed](02-historical-seed.md).

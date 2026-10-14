@@ -1,9 +1,9 @@
-"""PostToolUse hook: chạy ruff trên file Python vừa được Claude sửa.
+"""PostToolUse hook: run ruff on the Python file Claude just edited.
 
-Tự format và sửa lỗi lint sửa được. Còn lỗi thì thoát mã 2 để Claude thấy lỗi và sửa tiếp.
-Bỏ qua F401 (import chưa dùng): Claude hay thêm import trước rồi mới dùng ở lần sửa sau, nếu
-hook xóa import đó giữa chừng thì lần sửa sau lỗi. CI vẫn bắt F401 khi mở PR.
-Không có uv thì bỏ qua, không chặn công việc.
+Formats and fixes what lint can fix. Leftover errors exit with code 2 so Claude sees and fixes them.
+Ignores F401 (unused import): Claude often adds an import before using it in a later edit; if
+the hook removed it in between, the next edit would break. CI still catches F401 on the PR.
+Without uv the hook does nothing and never blocks work.
 """
 
 import json
@@ -20,7 +20,7 @@ def main() -> int:
     if not path.endswith(".py") or not Path(path).is_file() or shutil.which("uv") is None:
         return 0
 
-    # Chạy từ gốc repo để ruff đọc cấu hình trong pyproject.toml
+    # Run from the repo root so ruff reads the config in pyproject.toml
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or None
     run = ["uv", "run", "--quiet", "ruff"]
     subprocess.run([*run, "format", "--quiet", path], cwd=cwd, check=False)

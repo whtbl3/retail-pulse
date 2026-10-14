@@ -1,21 +1,21 @@
--- Khởi tạo Snowflake cho RetailPulse. Chạy bằng ACCOUNTADMIN qua `make snowflake-init`
--- (xem trước bằng `make snowflake-init-dry`). Viết để chạy lại nhiều lần không lỗi.
+-- Snowflake setup for RetailPulse. Run as ACCOUNTADMIN via `make snowflake-init`
+-- (preview with `make snowflake-init-dry`). Safe to run repeatedly.
 --
--- Thứ tự file:
---   1. Chi phí và tính toán   trần credit, warehouse nhỏ tự tắt
---   2. Database và role       nơi chứa dữ liệu, ai được làm gì
---   3. User                   tài khoản của dlt và dbt, đăng nhập bằng key pair
---   4. Schema của dbt         tạo sớm để cấp quyền cho CI
---   5. CI (GitHub Actions)    môi trường riêng cho slim CI, chỉ đọc dữ liệu thật
+-- File order:
+--   1. Cost and compute       credit cap, small auto-suspending warehouse
+--   2. Database and roles     where data lives, who may do what
+--   3. User                   dlt and dbt accounts, key pair login
+--   4. dbt schemas            created early so CI can be granted access
+--   5. CI (GitHub Actions)    separate environment for slim CI, read-only on real data
 --
--- Quy ước đọc file: mỗi câu lệnh kết thúc bằng dấu chấm phẩy, chỉ dùng chú thích cả dòng.
--- Các chuỗi __<USER>_PUBLIC_KEY__ được thay bằng public key của từng user lúc chạy.
+-- Parsing rules: every statement ends with a semicolon; only full-line comments are used.
+-- The __<USER>_PUBLIC_KEY__ strings are replaced with each user's public key at run time.
 
 USE ROLE ACCOUNTADMIN;
 
--- ===== 1. Chi phí và tính toán =====
--- Resource monitor đặt trần 10 credit mỗi tháng: cảnh báo ở 80 phần trăm, tự dừng ở 100.
--- Warehouse XSMALL tự tắt sau 60 giây không dùng và tự bật khi có truy vấn.
+-- ===== 1. Cost and compute =====
+-- Resource monitor caps usage at 10 credits a month: notify at 80 percent, suspend at 100.
+-- XSMALL warehouse suspends after 60 idle seconds and resumes on the next query.
 CREATE RESOURCE MONITOR IF NOT EXISTS RETAIL_RM
   WITH CREDIT_QUOTA = 10 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
   TRIGGERS ON 80 PERCENT DO NOTIFY
@@ -25,24 +25,24 @@ CREATE WAREHOUSE IF NOT EXISTS RETAIL_WH
   WAREHOUSE_SIZE = XSMALL AUTO_SUSPEND = 60 AUTO_RESUME = TRUE
   INITIALLY_SUSPENDED = TRUE RESOURCE_MONITOR = RETAIL_RM;
 
--- ===== 2. Database và role =====
--- RAW là nơi duy nhất dlt ghi vào. Các schema của dbt được tạo ở mục 4.
+-- ===== 2. Database and roles =====
+-- RAW is the only place dlt writes to. The dbt schemas are created in section 4.
 CREATE DATABASE IF NOT EXISTS RETAIL_PULSE;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.RAW;
 
--- LOADER cho dlt, TRANSFORMER cho dbt. Mỗi role chỉ có quyền vừa đủ cho việc của mình.
+-- LOADER for dlt, TRANSFORMER for dbt. Each role gets only the privileges its job needs.
 CREATE ROLE IF NOT EXISTS LOADER;
 CREATE ROLE IF NOT EXISTS TRANSFORMER;
 GRANT ROLE LOADER TO ROLE SYSADMIN;
 GRANT ROLE TRANSFORMER TO ROLE SYSADMIN;
 
--- LOADER: dlt ghi vào RAW
+-- LOADER: dlt writes to RAW
 GRANT USAGE ON WAREHOUSE RETAIL_WH TO ROLE LOADER;
 GRANT USAGE ON DATABASE RETAIL_PULSE TO ROLE LOADER;
 GRANT CREATE SCHEMA ON DATABASE RETAIL_PULSE TO ROLE LOADER;
 GRANT ALL ON SCHEMA RETAIL_PULSE.RAW TO ROLE LOADER;
 
--- TRANSFORMER: dbt đọc RAW, ghi các schema khác
+-- TRANSFORMER: dbt reads RAW and writes the other schemas
 GRANT USAGE ON WAREHOUSE RETAIL_WH TO ROLE TRANSFORMER;
 GRANT USAGE ON DATABASE RETAIL_PULSE TO ROLE TRANSFORMER;
 GRANT CREATE SCHEMA ON DATABASE RETAIL_PULSE TO ROLE TRANSFORMER;
@@ -51,8 +51,8 @@ GRANT SELECT ON ALL TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
 GRANT SELECT ON FUTURE TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
 
 -- ===== 3. User =====
--- Cả hai user đều đăng nhập bằng key pair (không mật khẩu) và là loại SERVICE.
--- User cho dlt: DLT_LOADER, role LOADER.
+-- Both users log in with a key pair (no password) and are of TYPE SERVICE.
+-- dlt user: DLT_LOADER, role LOADER.
 CREATE USER IF NOT EXISTS DLT_LOADER
   TYPE = SERVICE
   DEFAULT_ROLE = LOADER
@@ -60,7 +60,7 @@ CREATE USER IF NOT EXISTS DLT_LOADER
 ALTER USER DLT_LOADER SET RSA_PUBLIC_KEY = '__DLT_LOADER_PUBLIC_KEY__';
 GRANT ROLE LOADER TO USER DLT_LOADER;
 
--- User cho dbt: DBT_TRANSFORMER, role TRANSFORMER, key pair riêng.
+-- dbt user: DBT_TRANSFORMER, role TRANSFORMER, its own key pair.
 CREATE USER IF NOT EXISTS DBT_TRANSFORMER
   TYPE = SERVICE
   DEFAULT_ROLE = TRANSFORMER
@@ -68,18 +68,19 @@ CREATE USER IF NOT EXISTS DBT_TRANSFORMER
 ALTER USER DBT_TRANSFORMER SET RSA_PUBLIC_KEY = '__DBT_TRANSFORMER_PUBLIC_KEY__';
 GRANT ROLE TRANSFORMER TO USER DBT_TRANSFORMER;
 
--- ===== 4. Schema của dbt =====
--- Phải do role TRANSFORMER tạo để dbt là chủ sở hữu và ghi được bảng vào đó. Tạo sớm để mục 5
--- cấp được quyền đọc cho CI mà không phải đợi lần dbt build đầu tiên.
+-- ===== 4. dbt schemas =====
+-- Created by role TRANSFORMER so dbt owns them and can write tables there. Created early so
+-- section 5 can grant CI read access without waiting for the first dbt build.
 USE ROLE TRANSFORMER;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.STAGING;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.INTERMEDIATE;
 CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.MARTS;
 USE ROLE ACCOUNTADMIN;
 
--- ===== 5. CI (GitHub Actions, slim CI cho dbt) =====
--- CI chỉ GHI vào database riêng RETAIL_PULSE_CI và chỉ ĐỌC dữ liệu thật. Warehouse và resource monitor
--- riêng để một workflow chạy sai không đốt credit của pipeline thật.
+-- ===== 5. CI (GitHub Actions, slim CI for dbt) =====
+-- CI WRITES only to its own RETAIL_PULSE_CI database and only READS real data. A separate
+-- warehouse and resource monitor keep a misbehaving workflow from burning the real pipeline's
+-- credits.
 CREATE RESOURCE MONITOR IF NOT EXISTS RETAIL_CI_RM
   WITH CREDIT_QUOTA = 2 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
   TRIGGERS ON 80 PERCENT DO NOTIFY

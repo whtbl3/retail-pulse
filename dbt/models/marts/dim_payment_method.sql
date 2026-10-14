@@ -6,7 +6,7 @@ FROM {{ ref('stg_payment_method') }}
 
 UNION ALL
 
--- Thành viên Unknown cho khóa chưa có trong dimension (dữ liệu đến trễ)
+-- Unknown member for keys not yet in the dimension (late-arriving data)
 SELECT
     -2 AS payment_method_key,
     -2 AS payment_method_id,

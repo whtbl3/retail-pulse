@@ -1,105 +1,105 @@
-# Làm việc với Claude Code trong repo này
+# Working with Claude Code in this repo
 
-Trang này giải thích bằng tiếng Việt các file cấu hình Claude Code (viết bằng tiếng Anh để người ngoài đọc được).
-Đây là bước 1 của lộ trình phát triển theo SDLC: cho Claude "trí nhớ" về quy ước của repo và các rào chắn tự động,
-trước khi làm những bước sau (cổng chất lượng trong CI, spec cho từng tính năng, review, vận hành).
+This page explains the Claude Code configuration files in this repo.
+This is step 1 of the SDLC development roadmap: give Claude a "memory" of the repo's conventions and automatic guardrails,
+before the later steps (quality gates in CI, a spec for each feature, review, operations).
 
-## Các file và vai trò
+## Files and their roles
 
-| File | Là gì | Khi nào được dùng |
+| File | What it is | When it is used |
 |---|---|---|
-| `CLAUDE.md` | Hướng dẫn chung: lệnh, quy tắc dễ sai, quy trình, ngôn ngữ | Claude đọc ở đầu **mọi** phiên |
-| `.claude/rules/dbt.md` | Quy ước riêng cho dbt | Chỉ nạp khi Claude đọc hoặc sửa file trong `dbt/` |
-| `.claude/settings.json` | Quyền (allow, ask, deny) và hook | Claude Code áp dụng, Claude không tự bỏ qua được |
-| `.claude/hooks/protect_secrets.py` | Hook chặn sửa file bí mật | Trước mỗi lần Claude sửa hoặc tạo file |
-| `.claude/hooks/ruff_after_edit.py` | Hook format và lint file Python | Sau mỗi lần Claude sửa file `.py` |
+| `CLAUDE.md` | General guidance: commands, easy-to-break rules, workflow, language | Claude reads it at the start of **every** session |
+| `.claude/rules/dbt.md` | dbt-specific conventions | Loaded only when Claude reads or edits files in `dbt/` |
+| `.claude/settings.json` | Permissions (allow, ask, deny) and hooks | Enforced by Claude Code; Claude cannot skip them on its own |
+| `.claude/hooks/protect_secrets.py` | Hook that blocks edits to secret files | Before every time Claude edits or creates a file |
+| `.claude/hooks/ruff_after_edit.py` | Hook that formats and lints Python files | After every time Claude edits a `.py` file |
 
-Ranh giới quan trọng nhất: `CLAUDE.md` và rules là **lời khuyên**, Claude có thể quên hoặc hiểu sai.
-Settings và hook là **luật**, chạy bằng code nên luôn đúng. Điều gì bắt buộc phải đúng mọi lúc thì cần có luật đứng sau.
+The most important boundary: `CLAUDE.md` and rules are **advice**; Claude can forget or misread them.
+Settings and hooks are **law**; they run as code, so they always hold. Anything that must be true at all times needs a law behind it.
 
-> **Đọc thêm:** [How Claude remembers your project](https://code.claude.com/docs/en/memory) (CLAUDE.md và rules),
+> **Further reading:** [How Claude remembers your project](https://code.claude.com/docs/en/memory) (CLAUDE.md and rules),
 > [Steering Claude Code](https://claude.com/resources/articles/steering-claude-code-skills-hooks-rules-subagents-and-more)
-> (khi nào dùng CLAUDE.md, rule, skill, hook hay subagent).
+> (when to use CLAUDE.md, a rule, a skill, a hook or a subagent).
 
-## `CLAUDE.md`: viết gì và vì sao
+## `CLAUDE.md`: what goes in and why
 
-Nguyên tắc: mỗi dòng phải trả lời được câu "bỏ dòng này đi thì Claude có làm sai không?". File dài thì Claude bỏ qua
-bớt quy tắc, nên giữ dưới 200 dòng và không chép lại những gì đọc code là biết.
+Principle: every line must answer the question "if this line were removed, would Claude get something wrong?". When the file is long,
+Claude ignores some rules, so keep it under 200 lines and do not repeat what the code already makes obvious.
 
-- **Commands:** lệnh Claude không đoán được, ví dụ `make test` cần `make up` trước, thiếu Postgres thì test bị skip
-  chứ không báo đỏ. *Nếu bỏ:* Claude tưởng test đã qua trong khi thật ra bị bỏ qua.
-- **Rules that are easy to break:** các quyết định Final trong spec mà sai một lần là mất dữ liệu, ví dụ `make seed`
-  xóa RAW trên Snowflake (nơi duy nhất giữ lịch sử SCD2). Dòng này có chữ IMPORTANT vì hậu quả không sửa lại được.
-- **Workflow:** mọi thay đổi qua PR, khi nào dùng plan mode, đổi quyết định Final thì cập nhật decision log.
-- **Language:** cấu hình cho Claude bằng tiếng Anh, comment và tài liệu phase bằng tiếng Việt như hiện tại.
+- **Commands:** commands Claude cannot guess. For example, `make test` needs `make up` first; without Postgres the tests are skipped,
+  not marked red. *If removed:* Claude thinks the tests passed when they were actually skipped.
+- **Rules that are easy to break:** the Final decisions in the spec where one mistake loses data. For example, `make seed`
+  deletes RAW on Snowflake (the only place that keeps SCD2 history). This line says IMPORTANT because the damage cannot be undone.
+- **Workflow:** every change goes through a PR, when to use plan mode, and changing a Final decision means updating the decision log.
+- **Language:** everything in the repo is in English, including code comments, docs and commit messages.
 
-`CLAUDE.md` không import cả `docs/Project-Spec.md` bằng `@` vì spec dài hơn 500 dòng: import sẽ nạp toàn bộ vào mọi
-phiên và làm loãng hướng dẫn. Thay vào đó file chỉ đường tới spec để Claude đọc đúng mục khi cần.
+`CLAUDE.md` does not import the whole `docs/Project-Spec.md` with `@` because the spec is over 500 lines: an import would load all of it into every
+session and dilute the guidance. Instead, the file points to the spec so Claude reads the right section when needed.
 
-## `.claude/rules/dbt.md`: quy tắc theo đường dẫn
+## `.claude/rules/dbt.md`: path-scoped rules
 
-Phần đầu file có `paths: ["dbt/**"]`, nên quy tắc chỉ nạp khi Claude làm việc với dbt. Sửa Python thì không tốn
-chỗ trong context cho quy tắc dbt. Nội dung tóm tắt quy ước đã có trong spec §10 và
-`docs/design/analytical-data-modeling.md`: tên model theo tầng, khóa `-1`/`-2`, cách dựng SCD2, `fct_sales` incremental.
+The file starts with `paths: ["dbt/**"]`, so the rules load only when Claude works on dbt. Editing Python does not spend
+context on dbt rules. The content summarizes conventions already in spec §10 and
+`docs/design/analytical-data-modeling.md`: model names by layer, `-1`/`-2` keys, how SCD2 is built, incremental `fct_sales`.
 
-## `.claude/settings.json`: quyền
+## `.claude/settings.json`: permissions
 
-Claude Code xét quyền theo thứ tự **deny, rồi ask, rồi allow**; luật khớp đầu tiên quyết định.
+Claude Code evaluates permissions in the order **deny, then ask, then allow**; the first matching rule decides.
 
-| Nhóm | Lệnh | Vì sao |
+| Group | Commands | Why |
 |---|---|---|
-| allow | `make test`, `make lint`, `make dbt-parse`, `uv run pytest`, `uv run ruff`... | Lệnh an toàn chạy thường xuyên, không cần hỏi mỗi lần |
-| ask | `make seed`, `reseed`, `db-reset`, `clean-raw`, `snowflake-init`, `dbt-full-refresh`, `git push ... main` | Xóa RAW, đổi Snowflake hoặc đẩy thẳng lên `main`: luôn hỏi bạn, kể cả khi đang ở auto mode |
-| deny | `git push --force`, đọc `.env`, `.dlt/secrets.toml`, `dbt/profiles.yml`, `.snowflake/`, `*.p8`, `*.pem` | Không bao giờ cần; đọc file bí mật sẽ đưa mật khẩu vào cuộc hội thoại |
+| allow | `make test`, `make lint`, `make dbt-parse`, `uv run pytest`, `uv run ruff`... | Safe commands run often; no need to ask every time |
+| ask | `make seed`, `reseed`, `db-reset`, `clean-raw`, `snowflake-init`, `dbt-full-refresh`, `git push ... main` | Deletes RAW, changes Snowflake or pushes straight to `main`: always asks you, even in auto mode |
+| deny | `git push --force`, reading `.env`, `.dlt/secrets.toml`, `dbt/profiles.yml`, `.snowflake/`, `*.p8`, `*.pem` | Never needed; reading secret files would put passwords into the conversation |
 
-Luật Bash khớp theo chữ của lệnh. Claude Code tách lệnh ghép (`cd x && make seed`) nên luật vẫn bắt được, nhưng không
-bắt được lệnh viết theo cách khác hẳn (ví dụ gọi qua `sh -c`). Vì vậy đây là rào chắn cho thao tác thường gặp, không
-phải bức tường bảo mật tuyệt đối.
+Bash rules match the text of the command. Claude Code splits compound commands (`cd x && make seed`), so the rules still catch them, but they
+do not catch a command written in a very different way (for example through `sh -c`). So this is a guardrail for common actions, not
+an absolute security wall.
 
-> **Đọc thêm:** [Configure permissions](https://code.claude.com/docs/en/permissions).
+> **Further reading:** [Configure permissions](https://code.claude.com/docs/en/permissions).
 
-## Hai hook
+## The two hooks
 
-Hook là script Claude Code tự chạy ở một thời điểm cố định. Claude Code gửi thông tin lệnh gọi tool (dạng JSON) vào
-stdin của script. Script thoát mã `0` là cho qua; thoát mã `2` là báo lỗi, nội dung stderr được gửi lại cho Claude.
+A hook is a script that Claude Code runs automatically at a fixed point. Claude Code sends the tool call details (as JSON) to the
+script's stdin. Exit code `0` lets the action through; exit code `2` reports an error, and the stderr content is sent back to Claude.
 
-**`protect_secrets.py` (PreToolUse, trước khi sửa file).** Nếu file đích là `.env`, `secrets.toml`, `profiles.yml`,
-`*.p8`, `*.pem` hoặc nằm trong `.snowflake/` thì chặn. File mẫu `*.example` và `dbt/ci/profiles.yml` (chỉ dùng biến
-môi trường) vẫn sửa được.
-*Vì sao cần dù đã có `.gitignore`:* `.gitignore` chỉ ngăn commit, không ngăn Claude ghi đè mật khẩu thật của bạn.
+**`protect_secrets.py` (PreToolUse, before editing a file).** If the target file is `.env`, `secrets.toml`, `profiles.yml`,
+`*.p8`, `*.pem` or lives in `.snowflake/`, the edit is blocked. Template files `*.example` and `dbt/ci/profiles.yml` (environment
+variables only) can still be edited.
+*Why it is needed even with `.gitignore`:* `.gitignore` only prevents commits; it does not stop Claude from overwriting your real passwords.
 
-**`ruff_after_edit.py` (PostToolUse, sau khi sửa file).** Với file `.py`, chạy `ruff format` và `ruff check --fix`.
-Còn lỗi không tự sửa được thì trả mã 2 để Claude thấy lỗi và sửa tiếp ngay, thay vì đợi CI báo đỏ.
-Hook bỏ qua F401 (import chưa dùng) vì Claude thường thêm import ở lần sửa này rồi mới dùng ở lần sửa sau; xóa import
-giữa chừng sẽ làm lần sửa sau hỏng. CI vẫn bắt F401.
+**`ruff_after_edit.py` (PostToolUse, after editing a file).** For `.py` files, runs `ruff format` and `ruff check --fix`.
+If errors remain that cannot be fixed automatically, it returns code 2 so Claude sees them and fixes them right away, instead of waiting for CI to go red.
+The hook ignores F401 (unused import) because Claude often adds an import in one edit and uses it in the next; removing the import
+in between would break the next edit. CI still catches F401.
 
-Hai hook viết bằng Python thư viện chuẩn để chạy được trên mọi máy có `python3`, không cần cài `jq`.
+Both hooks are written in standard-library Python so they run on any machine with `python3`, without installing `jq`.
 
-> **Đọc thêm:** [Hooks reference](https://code.claude.com/docs/en/hooks) (các sự kiện và ý nghĩa mã thoát).
+> **Further reading:** [Hooks reference](https://code.claude.com/docs/en/hooks) (events and the meaning of exit codes).
 
-## Kiểm tra
+## Verification
 
-Kiểm tra hook mà không cần mở Claude, bằng cách gửi JSON giả vào stdin:
+Test a hook without opening Claude by sending fake JSON to stdin:
 
 ```bash
 echo '{"tool_input":{"file_path":".env"}}' | python3 .claude/hooks/protect_secrets.py; echo $?
-# in ra "Blocked: ..." và 2
+# prints "Blocked: ..." and 2
 echo '{"tool_input":{"file_path":".env.example"}}' | python3 .claude/hooks/protect_secrets.py; echo $?
-# in ra 0
+# prints 0
 ```
 
-Trong Claude Code: gõ `/context` để thấy `CLAUDE.md` đã được nạp, `/hooks` để xem hai hook, `/permissions` để xem
-các luật allow, ask, deny.
+In Claude Code: type `/context` to see that `CLAUDE.md` is loaded, `/hooks` to see the two hooks, and `/permissions` to see
+the allow, ask and deny rules.
 
-## Thay đổi so với trước
+## Changes from before
 
-Trước đây `.gitignore` bỏ qua cả thư mục `.claude`. Giờ chỉ bỏ qua phần riêng từng máy: `.claude/settings.local.json`,
-`.claude/worktrees/` và `CLAUDE.local.md`. Nếu máy bạn có file khác trong `.claude/` (ví dụ skill cá nhân) thì chúng
-sẽ hiện là untracked; chuyển chúng sang `~/.claude/` hoặc thêm vào `.gitignore`.
+Previously `.gitignore` ignored the whole `.claude` folder. Now it only ignores machine-specific parts: `.claude/settings.local.json`,
+`.claude/worktrees/` and `CLAUDE.local.md`. If your machine has other files in `.claude/` (for example personal skills), they
+will show up as untracked; move them to `~/.claude/` or add them to `.gitignore`.
 
-## Khi nào sửa các file này
+## When to edit these files
 
-- Claude lặp lại cùng một lỗi: thêm một dòng vào `CLAUDE.md` (hoặc vào rule nếu chỉ liên quan một vùng code).
-- Một quy tắc trong `CLAUDE.md` bị bỏ qua dù đã viết rõ: chuyển thành hook hoặc luật deny/ask.
-- Quy trình nhiều bước lặp lại (ví dụ thêm một model dbt): viết thành skill trong `.claude/skills/` (bước 3 của lộ trình).
-- Sở thích cá nhân không áp cho cả repo: để ở `.claude/settings.local.json` hoặc `~/.claude/`, không sửa file dùng chung.
+- Claude repeats the same mistake: add a line to `CLAUDE.md` (or to a rule if it only concerns one area of the code).
+- A rule in `CLAUDE.md` is ignored even though it is clearly written: turn it into a hook or a deny/ask rule.
+- A repeated multi-step process (for example adding a dbt model): write it as a skill in `.claude/skills/` (step 3 of the roadmap).
+- Personal preferences that do not apply to the whole repo: put them in `.claude/settings.local.json` or `~/.claude/`, not in the shared files.

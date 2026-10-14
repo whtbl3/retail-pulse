@@ -1,20 +1,20 @@
-## Thay đổi gì
+## What changed
 
-<!-- Trước: ... / Sau: ... (người đọc thấy gì khác) -->
+<!-- Before: ... / After: ... (what a reader will notice) -->
 
-## Vì sao
+## Why
 
-<!-- Link spec, issue hoặc specs/NNN-ten/ nếu có -->
+<!-- Link to the spec, an issue or specs/NNN-name/ if any -->
 
 ## Definition of Done (Project-Spec §16)
 
-- [ ] Hành vi khớp `docs/Project-Spec.md` và kiến trúc hiện có
-- [ ] Có test cho trường hợp bình thường và các lỗi quan trọng
-- [ ] `make check` xanh (ruff + pytest); đổi dbt thì `make dbt-parse` chạy được
-- [ ] Lệnh và cấu hình mới đã ghi vào tài liệu (`docs/phases/`, `docs/design/`, `make help`)
-- [ ] Không commit bí mật hay file runtime (`.env`, key, `dbt/target/`...)
-- [ ] Đổi một quyết định Final thì đã cập nhật decision log (§17) trong cùng PR
+- [ ] Behavior matches `docs/Project-Spec.md` and the existing architecture
+- [ ] Tests cover the normal case and the important failure cases
+- [ ] `make check` is green (ruff + pytest); for dbt changes, `make dbt-parse` succeeds
+- [ ] New commands and configuration are documented (`docs/phases/`, `docs/design/`, `make help`)
+- [ ] No secrets or runtime files committed (`.env`, keys, `dbt/target/`...)
+- [ ] If a Final decision changed, the decision log (§17) is updated in the same PR
 
-## Đã kiểm tra thế nào
+## How it was tested
 
-<!-- Lệnh đã chạy và kết quả -->
+<!-- Commands run and their results -->

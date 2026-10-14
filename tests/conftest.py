@@ -1,13 +1,13 @@
-"""Fixture dùng chung: một PostgreSQL database riêng cho test.
+"""Shared fixtures: a dedicated PostgreSQL database for tests.
 
-Không dùng SQLite vì schema dựa vào tính năng riêng của PostgreSQL (schema `retail`,
-IDENTITY, trigger cập nhật `updated_at`, INSERT ... RETURNING theo thứ tự, TRUNCATE).
+Not SQLite, because the schema relies on PostgreSQL-specific features (schema `retail`,
+IDENTITY, the `updated_at` trigger, ordered INSERT ... RETURNING, TRUNCATE).
 
-- Đầu phiên test: tạo database `<PG_DB>_test` (hoặc `PG_TEST_DB`) và chạy 01_schema.sql.
-- Sau mỗi test: TRUNCATE toàn bộ bảng. Không dùng rollback được vì generator tự commit
-  theo từng transaction (đó cũng là hành vi đang được test).
-- Cuối phiên: xóa database test.
-- Postgres chưa chạy (`make up`) thì các test cần DB được skip, unit test vẫn chạy.
+- Session start: create database `<PG_DB>_test` (or `PG_TEST_DB`) and run 01_schema.sql.
+- After each test: TRUNCATE every table. Rollback will not work because the generators commit
+  per transaction (which is also the behavior under test).
+- Session end: drop the test database.
+- If Postgres is not running (`make up`), DB tests are skipped and unit tests still run.
 """
 
 from __future__ import annotations
@@ -54,17 +54,17 @@ def _drop_test_db(admin: psycopg.Connection) -> None:
 @pytest.fixture(scope="session")
 def pg_engine() -> Iterator[Engine]:
     if settings.db == TEST_DB:
-        pytest.exit("PG_TEST_DB trùng database thật, dừng để tránh mất dữ liệu", returncode=2)
+        pytest.exit("PG_TEST_DB is the real database; stopping to avoid data loss", returncode=2)
     try:
         admin = _connect("postgres")
     except psycopg.OperationalError as exc:
-        pytest.skip(f"PostgreSQL không kết nối được ({exc.__class__.__name__}); chạy `make up`")
+        pytest.skip(f"Cannot connect to PostgreSQL ({exc.__class__.__name__}); run `make up`")
 
     with admin:
         _drop_test_db(admin)
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(TEST_DB)))
         with _connect(TEST_DB) as conn:
-            conn.execute(SCHEMA_SQL.read_text())  # type: ignore[arg-type]  # file SQL tin cậy
+            conn.execute(SCHEMA_SQL.read_text())  # type: ignore[arg-type]  # trusted SQL file
 
         engine = create_engine(settings.url.set(database=TEST_DB))
         try:
@@ -76,7 +76,7 @@ def pg_engine() -> Iterator[Engine]:
 
 @pytest.fixture
 def session_factory(pg_engine: Engine) -> Iterator[sessionmaker[Session]]:
-    """Session factory trỏ vào database test; bảng được làm sạch sau mỗi test."""
+    """Session factory pointing at the test database; tables are cleaned after each test."""
     yield sessionmaker(pg_engine, expire_on_commit=False)
     with pg_engine.begin() as conn:
         conn.execute(text(f"TRUNCATE {ALL_TABLES} RESTART IDENTITY CASCADE"))
@@ -84,6 +84,6 @@ def session_factory(pg_engine: Engine) -> Iterator[sessionmaker[Session]]:
 
 @pytest.fixture
 def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
-    """Session để đọc/kiểm tra dữ liệu trong test."""
+    """Session for reading/checking data in tests."""
     with session_factory() as session:
         yield session

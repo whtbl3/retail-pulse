@@ -1,58 +1,58 @@
-# Phase 6 — Dagster (điều phối dlt, dbt và kiểm tra chất lượng)
+# Phase 6: Dagster (orchestrating dlt, dbt and quality checks)
 
-Sau phase 5, cả chuỗi vẫn chạy bằng tay: `make ingest`, rồi `make dbt-build`, nhớ đúng thứ tự, nhớ chạy mỗi ngày.
-Dagster gom lại thành một đồ thị: biết cái nào chạy trước, chạy theo lịch, dừng đúng chỗ khi có lỗi, và cho xem trạng thái
-cùng lineage của từng bảng. Phạm vi theo [Project-Spec, mục 11](../Project-Spec.md#11-orchestration-specification).
-Chưa làm: thử lại tự động, cảnh báo, sensor và triển khai lên máy chủ.
+After phase 5, the whole chain still runs by hand: `make ingest`, then `make dbt-build`, in the right order, every day.
+Dagster puts it into one graph: it knows what runs first, runs on a schedule, stops at the right place on failure, and
+shows the status and lineage of each table. Scope follows [Project-Spec, section 11](../Project-Spec.md#11-orchestration-specification).
+Not done yet: automatic retries, alerts, sensors and deployment to a server.
 
-## Khái niệm
+## Concepts
 
-| Khái niệm | Là gì | Trong dự án |
+| Concept | What it is | In this project |
 |---|---|---|
-| **Asset** | Một thứ dữ liệu được tạo ra (bảng RAW, model dbt), có phụ thuộc vào asset khác. Giống model của dbt nhưng mở rộng ra cả bước nạp dữ liệu | 10 asset RAW của dlt, 20 asset dbt |
-| **Asset check** | Phép kiểm gắn vào một asset | Test dbt; kiểm tra Great Expectations trên RAW |
-| **Job** | Nhóm asset được đặt tên để chạy cùng lúc, tự xếp thứ tự theo phụ thuộc | `full_pipeline`, `fct_sales_full_refresh` |
-| **Schedule** | Đến giờ thì tự launch một job | Hằng ngày 23:00 cho `full_pipeline` |
-| **Definitions** (`defs`) | Danh sách mọi asset, job, lịch mà Dagster biết | `definitions.py` |
-| **Code location** | Gói code Dagster nạp vào | module `retail_pulse.orchestration.definitions`, khai báo ở `pyproject.toml` (`[tool.dagster]`) |
-| **Daemon** | Tiến trình nền kích hoạt lịch | `make dagster` bật sẵn |
+| **Asset** | A piece of data that gets produced (a RAW table, a dbt model), with dependencies on other assets. Like a dbt model, but extended to the loading step too | 10 dlt RAW assets, 20 dbt assets |
+| **Asset check** | A check attached to an asset | dbt tests; Great Expectations checks on RAW |
+| **Job** | A named group of assets run together, ordered automatically by dependencies | `full_pipeline`, `fct_sales_full_refresh` |
+| **Schedule** | Launches a job at a set time | Daily at 23:00 for `full_pipeline` |
+| **Definitions** (`defs`) | The list of every asset, job and schedule Dagster knows about | `definitions.py` |
+| **Code location** | The code package Dagster loads | module `retail_pulse.orchestration.definitions`, declared in `pyproject.toml` (`[tool.dagster]`) |
+| **Daemon** | Background process that triggers schedules | started by `make dagster` |
 
-Đọc thêm: [Assets](https://docs.dagster.io/guides/build/assets), [Jobs](https://docs.dagster.io/guides/build/jobs),
+Further reading: [Assets](https://docs.dagster.io/guides/build/assets), [Jobs](https://docs.dagster.io/guides/build/jobs),
 [Schedules](https://docs.dagster.io/guides/automate/schedules).
 
-## Các file
+## Files
 
-| File (`src/retail_pulse/orchestration/`) | Việc |
+| File (`src/retail_pulse/orchestration/`) | What it does |
 |---|---|
-| `dlt_assets.py` | Mỗi bảng RAW là một asset (bước 1) |
-| `dbt_assets.py` | Mỗi model dbt là một asset (bước 2) |
-| `quality_checks.py` | Kiểm tra Great Expectations gắn vào asset RAW, chặn dbt khi fail ([phase 8](08-great-expectations.md)) |
-| `jobs.py` | Hai job và lịch chạy (bước 3, 4) |
-| `definitions.py` | Gom tất cả vào `Definitions` |
+| `dlt_assets.py` | Each RAW table is an asset (step 1) |
+| `dbt_assets.py` | Each dbt model is an asset (step 2) |
+| `quality_checks.py` | Great Expectations checks attached to RAW assets, blocking dbt on failure ([phase 8](08-great-expectations.md)) |
+| `jobs.py` | Two jobs and the schedule (steps 3, 4) |
+| `definitions.py` | Collects everything into `Definitions` |
 
-## Chạy
+## Running
 
 ```bash
-uv run dagster definitions validate -m retail_pulse.orchestration.definitions   # kỳ vọng: Validation successful
-make dagster                                                                    # mở giao diện http://localhost:3000
+uv run dagster definitions validate -m retail_pulse.orchestration.definitions   # expected: Validation successful
+make dagster                                                                    # opens the UI at http://localhost:3000
 ```
 
-**Manifest của dbt.** `@dbt_assets` đọc `dbt/target/manifest.json` ngay lúc nạp code. `dagster dev` tự sinh nó
-(`prepare_if_dev`), nhưng `validate` và chạy ngoài chế độ dev thì không. *Nếu thiếu* (sau `make clean` hoặc trên máy mới):
-lỗi `DagsterDbtManifestNotFoundError: .../manifest.json does not exist`. Cách xử lý: `make dbt-parse` trước.
+**The dbt manifest.** `@dbt_assets` reads `dbt/target/manifest.json` as soon as the code loads. `dagster dev` generates it
+(`prepare_if_dev`), but `validate` and runs outside dev mode do not. *If it is missing* (after `make clean` or on a new
+machine): error `DagsterDbtManifestNotFoundError: .../manifest.json does not exist`. Fix: run `make dbt-parse` first.
 
-**Lịch sử chạy.** Chưa đặt `DAGSTER_HOME` thì lịch sử chạy mất khi tắt Dagster. Đặt biến này (xem `.env.example`) ra một
-thư mục cố định, ví dụ `.dagster_home/` (đã nằm trong `.gitignore`).
+**Run history.** Without `DAGSTER_HOME`, run history is lost when Dagster stops. Set this variable (see `.env.example`)
+to a fixed folder, for example `.dagster_home/` (already in `.gitignore`).
 
-## Những điều cần nhớ từ các phase trước
+## Things to remember from earlier phases
 
-- RAW là nơi duy nhất giữ lịch sử SCD2 của `product` và `employee`. Chuỗi điều phối **không bao giờ** được chạy dlt với
-  `replace` hay `refresh="drop_sources"` lên hai bảng đó.
-- `fct_sales` sửa dòng khóa `-2` bằng `--full-refresh` của riêng nó (job `fct_sales_full_refresh`), không đụng RAW.
-- dbt chạy từ thư mục `dbt/` và cần `SNOWFLAKE_ACCOUNT`, `DBT_PRIVATE_KEY_PATH` ([phase 5](05-dbt.md)); Dagster nạp `.env`
-  ở thư mục gốc, nên **chạy Dagster từ thư mục gốc repo**.
+- RAW is the only place that holds the SCD2 history of `product` and `employee`. The orchestration chain must **never**
+  run dlt with `replace` or `refresh="drop_sources"` on those two tables.
+- `fct_sales` fixes `-2` key rows with its own `--full-refresh` (the `fct_sales_full_refresh` job), without touching RAW.
+- dbt runs from the `dbt/` folder and needs `SNOWFLAKE_ACCOUNT`, `DBT_PRIVATE_KEY_PATH` ([phase 5](05-dbt.md)). Dagster
+  loads `.env` from the root folder, so **run Dagster from the repo root**.
 
-## Bước 1 — Asset dlt
+## Step 1: dlt assets
 
 ```python
 @dlt_assets(
@@ -65,14 +65,15 @@ def retail_raw_assets(context, dlt_res: DagsterDltResource):
     yield from dlt_res.run(context=context)
 ```
 
-- `@dlt_assets` biến mỗi **resource** của dlt (mỗi bảng) thành **một asset riêng**: 10 asset `raw/<tên bảng>`. Asset riêng thì
-  Dagster hiện trạng thái, số dòng nạp, thời gian cho từng bảng, và mỗi model dbt nối được vào đúng bảng nó đọc.
-- `retail_pipeline()` (trong `ingestion/pipelines.py`) là **một nơi duy nhất** định nghĩa pipeline dlt, dùng chung cho
-  `make ingest` và Dagster nên hai nơi không lệch nhau.
-- `RetailDltTranslator` đổi key asset thành `["raw", <tên bảng>]`, trùng key mặc định của source dbt
-  `source('raw', 'store')`. Nhờ vậy ở bước 2, đồ thị nối liền từ RAW sang staging mà không cần cấu hình thêm.
+- `@dlt_assets` turns each dlt **resource** (each table) into **its own asset**: 10 assets `raw/<table name>`. With
+  separate assets, Dagster shows status, rows loaded and timing per table, and each dbt model can connect to exactly the
+  table it reads.
+- `retail_pipeline()` (in `ingestion/pipelines.py`) is the **single place** that defines the dlt pipeline. Both
+  `make ingest` and Dagster use it, so the two cannot drift apart.
+- `RetailDltTranslator` changes the asset key to `["raw", <table name>]`, which matches the default key of the dbt source
+  `source('raw', 'store')`. So in step 2 the graph connects RAW to staging with no extra configuration.
 
-## Bước 2 — Asset dbt, và nối lineage
+## Step 2: dbt assets, and connecting lineage
 
 ```python
 dbt_project = DbtProject(project_dir=Path(__file__).parents[3] / "dbt",
@@ -82,119 +83,125 @@ dbt_project.prepare_if_dev()
 @dbt_assets(manifest=dbt_project.manifest_path)
 def retail_dbt_assets(context, dbt: DbtCliResource):
     args = ["build"]
-    if context.run.tags.get("full_refresh") == "true":   # xem bước 3
+    if context.run.tags.get("full_refresh") == "true":   # see step 3
         args.append("--full-refresh")
     yield from dbt.cli(args, context=context).stream()
 ```
 
-- `@dbt_assets` đọc manifest và biến **mỗi model dbt thành một asset** (20 model). Các `ref()` thành mũi tên phụ thuộc
-  nên đồ thị Dagster giống DAG của dbt; thêm model mới thì asset tự xuất hiện.
-- `dbt.cli(["build"])` gọi `dbt build` thật dưới nền (cả model lẫn test) và gắn kết quả vào từng asset. Test dbt hiện thành
-  **asset check** của đúng model, nên thấy ngay model nào có test fail.
-- Dagster dùng dbt-core trong `.venv`, không dùng bản dbt ở `~/.local/bin`.
+- `@dbt_assets` reads the manifest and turns **each dbt model into an asset** (20 models). Each `ref()` becomes a
+  dependency arrow, so the Dagster graph matches the dbt DAG; new models appear as assets automatically.
+- `dbt.cli(["build"])` runs a real `dbt build` underneath (models and tests) and attaches the results to each asset. dbt
+  tests show up as **asset checks** on the right model, so you see at once which model has a failing test.
+- Dagster uses the dbt-core in `.venv`, not the dbt in `~/.local/bin`.
 
-**Lineage nối liền từ Postgres tới `fct_sales`**, kiểm chứng trên đồ thị (40 asset: 10 asset RAW, 20 asset dbt, và 10 asset
-`sql_database_<bảng>` do dagster-dlt tự tạo, đại diện cho bảng nguồn ở Postgres):
+**Lineage connects from Postgres to `fct_sales`**, verified on the graph (40 assets: 10 RAW assets, 20 dbt assets, and 10
+`sql_database_<table>` assets created by dagster-dlt to represent the source tables in Postgres):
 
-| Asset | Phụ thuộc vào |
+| Asset | Depends on |
 |---|---|
 | `staging/stg_store` | `raw/store` |
 | `staging/stg_sales_transaction_item` | `raw/sales_transaction_item`, `staging/stg_sales_transaction` |
-| `marts/fct_sales` | 7 dimension (gồm `dim_date`, `dim_time`), hai model staging bán hàng |
+| `marts/fct_sales` | 7 dimensions (including `dim_date`, `dim_time`), the two sales staging models |
 
-Tên asset gồm schema và model (key dbt là `[schema, model]`), asset dlt là `raw/<bảng>`.
+Asset names are schema plus model (the dbt key is `[schema, model]`); dlt assets are `raw/<table>`.
 
-Ảnh chụp **Global asset lineage** sau khi Materialize (`make dagster`, mục Lineage, chọn asset, Materialize selected):
+Screenshot of **Global asset lineage** after Materialize (`make dagster`, Lineage section, select assets, Materialize
+selected):
 
-![Global asset lineage trong Dagster](../../assets/diagrams/dagster-asset-lineage.png)
+![Global asset lineage in Dagster](../../assets/diagrams/dagster-asset-lineage.png)
 
-Trong ảnh: cột trái chia asset theo nhóm `default` (asset dbt) và `raw` (asset dlt); mỗi nút hiện thời điểm materialize, số
-asset check đã pass và nhãn công nghệ; panel phải (đang chọn `fct_sales`) hiện danh sách check, metadata
-`materialization_type: incremental`, `table_name: RETAIL_PULSE.marts.fct_sales`.
+In the screenshot: the left column groups assets into `default` (dbt assets) and `raw` (dlt assets); each node shows the
+materialization time, the number of asset checks passed and a technology tag; the right panel (with `fct_sales` selected)
+shows the list of checks and the metadata `materialization_type: incremental`,
+`table_name: RETAIL_PULSE.marts.fct_sales`.
 
-## Kiểm tra chất lượng RAW chặn dbt
+## RAW quality checks block dbt
 
-Phase 8 gắn một asset check `great_expectations` vào bốn asset RAW (`sales_transaction`, `sales_transaction_item`,
-`product`, `employee`) với `blocking=True`: nếu một check fail thì asset dbt phía sau **không chạy**.
+Phase 8 attaches a `great_expectations` asset check to four RAW assets (`sales_transaction`, `sales_transaction_item`,
+`product`, `employee`) with `blocking=True`: if a check fails, the downstream dbt assets **do not run**.
 
-*Vì sao:* build dbt trên RAW bẩn vẫn "xanh" nhưng cho số sai. Chặn ngay ở cửa vào rẻ hơn tìm lỗi ở dashboard.
-Đọc thêm: [Asset checks](https://docs.dagster.io/guides/test/asset-checks).
+*Why:* a dbt build on dirty RAW still shows "green" but gives wrong numbers. Blocking at the entrance is cheaper than
+finding the bug in the dashboard.
+Further reading: [Asset checks](https://docs.dagster.io/guides/test/asset-checks).
 
-## Bước 3 — Job
+## Step 3: Jobs
 
-| Job | Chọn asset | Dùng khi |
+| Job | Asset selection | Use it for |
 |---|---|---|
-| `full_pipeline` | `retail_raw_assets` (dlt) và `retail_dbt_assets` (dbt) | Chạy thường kỳ: dlt nạp RAW, rồi `dbt build` toàn bộ (model và test) |
-| `fct_sales_full_refresh` | chỉ `marts/fct_sales`, kèm tag `full_refresh=true` | Sửa dòng khóa `-2` của fact; không chạy dlt, không đụng RAW |
+| `full_pipeline` | `retail_raw_assets` (dlt) and `retail_dbt_assets` (dbt) | Regular runs: dlt loads RAW, then a full `dbt build` (models and tests) |
+| `fct_sales_full_refresh` | only `marts/fct_sales`, with tag `full_refresh=true` | Fixing `-2` key rows in the fact; does not run dlt, does not touch RAW |
 
-**Làm sao một asset dbt biết phải `--full-refresh`:** hai job dùng chung asset dbt, chỉ khác tag của lần chạy; asset đọc
-tag đó (đoạn code ở bước 2). Dagster tự thêm `--select` theo asset được chọn, nên job full-refresh chạy
-`dbt build --full-refresh --select retail_pulse.marts.fct_sales`. (Một lần chạy thử: 26/26 test pass, `fct_sales` vẫn
-271.766 dòng.) Dùng một asset với hai kiểu chạy thay vì hai asset trùng khóa, vì Dagster không cho hai asset cùng khóa.
+**How a dbt asset knows to use `--full-refresh`:** the two jobs share the dbt assets and differ only in the run tag; the
+asset reads that tag (the code in step 2). Dagster adds `--select` for the selected assets, so the full-refresh job runs
+`dbt build --full-refresh --select retail_pulse.marts.fct_sales`. (One test run: 26/26 tests passed, `fct_sales` still
+271,766 rows.) One asset with two run modes is used instead of two assets with the same key, because Dagster does not
+allow two assets with the same key.
 
 ```bash
-uv run dagster job execute -m retail_pulse.orchestration.definitions -j full_pipeline   # không cần mở giao diện
+uv run dagster job execute -m retail_pulse.orchestration.definitions -j full_pipeline   # no UI needed
 ```
-Hoặc trong giao diện: mục **Jobs**, chọn job, **Launchpad**, **Launch Run**.
+Or in the UI: **Jobs**, pick the job, **Launchpad**, **Launch Run**.
 
-**An toàn:** đặt nhầm tag `full_refresh=true` cho `full_pipeline` thì mọi model dbt bị dựng lại (vô hại nhưng chậm hơn).
-RAW không bao giờ bị ghi đè vì cờ này chỉ ảnh hưởng dbt.
+**Safety:** if the `full_refresh=true` tag is set on `full_pipeline` by mistake, every dbt model is rebuilt (harmless but
+slower). RAW is never overwritten because this flag only affects dbt.
 
-## Bước 4 — Lịch chạy
+## Step 4: Schedule
 
-| Quyết định | Chọn | Lý do |
+| Decision | Choice | Reason |
 |---|---|---|
-| Job được lên lịch | `full_pipeline` | dlt nạp RAW rồi dbt build |
-| Tần suất | Mỗi ngày 23:00, múi giờ `Asia/Ho_Chi_Minh` | Cửa hàng mở 7h–22h, chạy sau giờ đóng cửa thì đã đủ đơn cả ngày; dashboard xem theo ngày không cần mới hơn |
-| `fct_sales_full_refresh` | Không lên lịch, chạy tay | Chỉ cần khi có dòng khóa `-2`; dựng lại cả bảng tốn tài nguyên |
-| dlt lỗi thì sao | Không build dbt | Mặc định của Dagster, không cần cấu hình thêm |
+| Scheduled job | `full_pipeline` | dlt loads RAW, then dbt builds |
+| Frequency | Daily at 23:00, time zone `Asia/Ho_Chi_Minh` | Stores open 7:00 to 22:00, so running after closing captures the whole day's orders; a daily dashboard does not need fresher data |
+| `fct_sales_full_refresh` | Not scheduled, run by hand | Only needed when there are `-2` key rows; rebuilding the whole table costs resources |
+| What if dlt fails | dbt does not build | Dagster default, no extra configuration |
 
-*Vì sao dlt lỗi thì dbt không chạy mà không cần code gì:* asset dbt phụ thuộc asset dlt trong đồ thị; asset phía trên fail
-thì mọi asset phía dưới bị bỏ qua (skipped). Ngược lại nếu dlt xong mà dbt fail, RAW đã có dữ liệu mới, lần sau chỉ cần chạy
-lại các asset dbt.
+*Why dbt does not run when dlt fails, with no code for it:* the dbt assets depend on the dlt assets in the graph; when an
+upstream asset fails, every downstream asset is skipped. On the other hand, if dlt succeeds and dbt fails, RAW already has
+the new data, and next time you only need to rerun the dbt assets.
 
-**Lịch chỉ chạy khi daemon chạy.** `make dagster` bật sẵn daemon, nên máy phải mở và tiến trình còn sống lúc 23:00. Production
-thật dùng `dagster-daemon run` chạy nền (systemd hoặc Docker), không dùng `dagster dev`. Xem và bật tắt lịch ở mục
-**Automation**; lịch đặt `default_status=RUNNING` nên tự bật. Thử ngay không cần đợi 23:00: vào lịch, **Test Schedule**, hoặc
-launch `full_pipeline` bằng tay.
+**The schedule only runs while the daemon runs.** `make dagster` starts the daemon, so the machine must be on and the
+process alive at 23:00. Real production uses `dagster-daemon run` in the background (systemd or Docker), not
+`dagster dev`. View and toggle schedules under **Automation**; the schedule sets `default_status=RUNNING`, so it is on by
+default. To test without waiting for 23:00: open the schedule and use **Test Schedule**, or launch `full_pipeline` by hand.
 
-Đọc thêm: [Defining schedules](https://docs.dagster.io/guides/automate/schedules/defining-schedules),
+Further reading: [Defining schedules](https://docs.dagster.io/guides/automate/schedules/defining-schedules),
 [Dagster daemon](https://docs.dagster.io/guides/deploy/execution/dagster-daemon),
 [Instance configuration](https://docs.dagster.io/guides/deploy/dagster-instance-configuration) (`DAGSTER_HOME`).
 
-## Lỗi đã gặp
+## Errors encountered
 
-| Triệu chứng | Nguyên nhân | Cách sửa |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `No module named 'orchestration'` | Import thiếu tên package | Dùng `from retail_pulse.orchestration....` |
-| `connection to server ... port 5432 failed` khi `validate` lúc Postgres tắt | `sql_database(...)` đọc cấu trúc bảng từ Postgres **ngay lúc import** (reflection) | `sql_database(..., reflection_level="full", defer_table_reflect=True)` |
-| `ValidationError for DbtCliResource ... does not contain a profiles.yml` | `profiles.yml` ở `~/.dbt/`, còn `DbtCliResource` chỉ tìm trong thư mục dự án dbt | Truyền `profiles_dir` (mặc định `~/.dbt`, ghi đè bằng `DBT_PROFILES_DIR`) |
-| Cùng lỗi trên nhưng chỉ khi `dagster dev` | `prepare_if_dev()` tự tạo `DbtCliResource` riêng từ `DbtProject` | Đặt `profiles_dir` ngay ở `DbtProject`, không chỉ ở resource |
-| `DagsterDbtManifestNotFoundError` | Chưa có `dbt/target/manifest.json` | `make dbt-parse` |
+| `No module named 'orchestration'` | Import missing the package name | Use `from retail_pulse.orchestration....` |
+| `connection to server ... port 5432 failed` on `validate` while Postgres is down | `sql_database(...)` reads table structure from Postgres **at import time** (reflection) | `sql_database(..., reflection_level="full", defer_table_reflect=True)` |
+| `ValidationError for DbtCliResource ... does not contain a profiles.yml` | `profiles.yml` is in `~/.dbt/`, but `DbtCliResource` only looks in the dbt project folder | Pass `profiles_dir` (default `~/.dbt`, overridden by `DBT_PROFILES_DIR`) |
+| Same error as above, but only with `dagster dev` | `prepare_if_dev()` creates its own `DbtCliResource` from `DbtProject` | Set `profiles_dir` on `DbtProject` too, not only on the resource |
+| `DagsterDbtManifestNotFoundError` | `dbt/target/manifest.json` does not exist yet | `make dbt-parse` |
 
-**Bài học từ lỗi Postgres:** code chạy lúc **import** phải rẻ và không phụ thuộc hệ thống ngoài; việc cần kết nối (đọc cấu
-trúc, gọi API, truy vấn) nên hoãn đến lúc **thực thi**. Lỗi này hay gặp ở mọi framework nạp code trước rồi chạy sau
-(Dagster, Airflow). `defer_table_reflect=True` an toàn: đã so sánh cột trích xuất có và không có tùy chọn này cho ba bảng
-(`product`, `sales_transaction_item`, `promotion`), giống hệt nhau (ví dụ `unit_price`, `unit_cost` đều `decimal(12, 2)`), nên RAW
-không đổi kiểu cột (nếu đổi, dlt tạo thêm cột `..._v_text` rất khó dọn). Kiểm tra bằng cách nạp code khi Postgres không
-tồn tại: `PG_PORT=59999 uv run python -c "import retail_pulse.orchestration.dlt_assets"` phải chạy được.
+**Lesson from the Postgres error:** code that runs at **import** must be cheap and must not depend on external systems;
+work that needs a connection (reading structure, calling APIs, querying) should wait until **execution**. This is common
+in every framework that loads code first and runs it later (Dagster, Airflow). `defer_table_reflect=True` is safe: the
+extracted columns were compared with and without this option for three tables (`product`, `sales_transaction_item`,
+`promotion`) and were identical (for example `unit_price`, `unit_cost` are both `decimal(12, 2)`), so RAW column types do
+not change (if they did, dlt would add `..._v_text` columns that are very hard to clean up). Check it by loading the code
+with no Postgres available: `PG_PORT=59999 uv run python -c "import retail_pulse.orchestration.dlt_assets"` must succeed.
 
-**Bài học từ lỗi `profiles_dir`:** `dagster definitions validate` không bao phủ các bước chỉ chạy ở chế độ dev, nên cần thử
-bằng `dagster dev` thật.
+**Lesson from the `profiles_dir` error:** `dagster definitions validate` does not cover steps that only run in dev mode,
+so test with a real `dagster dev` too.
 
-## Kiểm thử
+## Tests
 
-`tests/test_orchestration.py`: mỗi bảng RAW có một asset; hai job tồn tại với đúng lựa chọn asset và tag (`full_pipeline`
-chứa `raw/product` và `marts/fct_sales`, job full-refresh chỉ chọn `fct_sales`); lịch đúng cron và múi giờ.
+`tests/test_orchestration.py`: each RAW table has one asset; both jobs exist with the right asset selection and tags
+(`full_pipeline` contains `raw/product` and `marts/fct_sales`, the full-refresh job selects only `fct_sales`); the schedule
+has the right cron and time zone.
 
-## Còn có thể cải thiện
+## Possible improvements
 
-- 20 asset dbt đang nằm chung nhóm `default`; có thể chia nhóm theo tầng (`staging`, `intermediate`, `marts`) bằng cách ghi
-  đè `get_group_name` của `DagsterDbtTranslator`.
-- Đổi tên 10 asset `sql_database_<bảng>` cho gọn bằng `get_deps_asset_keys` của translator.
-- Thử lại tự động, cảnh báo khi lỗi, sensor, và triển khai bằng `dagster-daemon` trên máy chủ.
+- The 20 dbt assets share the `default` group; they could be grouped by layer (`staging`, `intermediate`, `marts`) by
+  overriding `get_group_name` on `DagsterDbtTranslator`.
+- Rename the 10 `sql_database_<table>` assets to something shorter with the translator's `get_deps_asset_keys`.
+- Automatic retries, failure alerts, sensors, and deployment with `dagster-daemon` on a server.
 
-Đọc thêm: [thư viện dagster-dbt](https://docs.dagster.io/api/libraries/dagster-dbt),
-[thư viện dagster-dlt](https://docs.dagster.io/api/libraries/dagster-dlt).
+Further reading: [dagster-dbt library](https://docs.dagster.io/api/libraries/dagster-dbt),
+[dagster-dlt library](https://docs.dagster.io/api/libraries/dagster-dlt).
 
-Tiếp theo: [Phase 7 — Preset](07-preset.md).
+Next: [Phase 7: Preset](07-preset.md).

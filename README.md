@@ -1,54 +1,54 @@
 # Retail Pulse
 
-**Từ một tờ hóa đơn đến dashboard lợi nhuận: xây pipeline dữ liệu bán lẻ end-to-end.**
+**From a receipt to a profit dashboard: building an end-to-end retail data pipeline.**
 
-PostgreSQL → dlt → Snowflake → dbt → Dagster → Preset, kiểm tra bằng Great Expectations và GitHub Actions. Chạy được trên một chiếc laptop.
+PostgreSQL → dlt → Snowflake → dbt → Dagster → Preset, checked with Great Expectations and GitHub Actions. Runs on a single laptop.
 
-![Hóa đơn tính tiền mẫu](./assets/diagrams/Sample_cash_register_receipt.png)
+![Sample cash register receipt](./assets/diagrams/Sample_cash_register_receipt.png)
 
-Mỗi lần bạn thanh toán ở siêu thị, một tờ hóa đơn như trên ra đời. Với người mua, nó là mảnh giấy để vứt đi. Với chuỗi bán lẻ, nó là mỏ vàng: mỗi dòng cho biết **bán gì, bao nhiêu, ở đâu, lúc nào, giá nào, có khuyến mãi không**.
+Every time you pay at a supermarket, a receipt like the one above is created. For the shopper, it is a scrap of paper to throw away. For a retail chain, it is a gold mine: each line says **what was sold, how many, where, when, at what price, and whether a promotion applied**.
 
-Vấn đề là mỏ vàng đó nằm rải rác trong cơ sở dữ liệu của hệ thống bán hàng (POS), thiết kế để ghi nhanh chứ không để phân tích. Dự án này đi hết quãng đường từ đó đến một dashboard trả lời được những câu hỏi như:
+The problem is that this gold mine is scattered across the database of the point-of-sale (POS) system, which is designed for fast writes, not for analysis. This project goes all the way from there to a dashboard that answers questions like:
 
-- Cửa hàng nào và sản phẩm nào lãi nhiều nhất?
-- Khuyến mãi nào thật sự hiệu quả, khuyến mãi nào chỉ cho đi?
-- Giá vốn tăng 3% thì lợi nhuận thay đổi ra sao?
+- Which stores and which products are the most profitable?
+- Which promotions actually work, and which just give money away?
+- If cost of goods rises 3%, how does profit change?
 
-Khách hàng, tồn kho, trả hàng và hủy đơn nằm ngoài phạm vi, để tập trung làm đúng một quy trình: **bán hàng**.
+Customers, inventory, returns and cancellations are out of scope, to focus on getting one process right: **sales**.
 
-> **Phạm vi nạp dữ liệu:** incremental theo cột `updated_at` (batch). CDC dựa trên log (Debezium, Redpanda) chưa làm; xem [Project-Spec](./docs/Project-Spec.md).
-> **Tài liệu:** lộ trình theo phase, hướng dẫn chạy và thiết kế nằm ở [docs/README.md](./docs/README.md).
+> **Ingestion scope:** incremental on the `updated_at` column (batch). Log-based CDC (Debezium, Redpanda) is not done; see [Project-Spec](./docs/Project-Spec.md).
+> **Documentation:** the phase roadmap, run guides and design docs are in [docs/README.md](./docs/README.md).
 
-# 1. Bắt đầu từ nguồn: mô hình dữ liệu vận hành
+# 1. Start from the source: the operational data model
 
-Trước khi nghĩ đến warehouse, phải hiểu dữ liệu nguồn trông thế nào. Hệ thống POS giả lập được mô hình hóa qua ba bước: Conceptual (có những thực thể nào) → Logical (3NF, 10 bảng) → Physical (PostgreSQL).
+Before thinking about the warehouse, you need to understand what the source data looks like. The simulated POS system is modeled in three steps: Conceptual (which entities exist) → Logical (3NF, 10 tables) → Physical (PostgreSQL).
 
-Trọng tâm là hai bảng: `sales_transaction` là **header** (một lần thanh toán), `sales_transaction_item` là **từng dòng hàng** trên hóa đơn. Mọi phân tích về doanh thu đều xuất phát từ dòng hàng này.
+The focus is on two tables: `sales_transaction` is the **header** (one checkout), and `sales_transaction_item` is **each line** on the receipt. Every revenue analysis starts from these line items.
 
-Sơ đồ và lý do thiết kế: [Mô hình dữ liệu vận hành](./docs/design/operational-data-modeling.md). Phía warehouse: [Mô hình phân tích](./docs/design/analytical-data-modeling.md).
+Diagrams and design rationale: [Operational data model](./docs/design/operational-data-modeling.md). On the warehouse side: [Analytical model](./docs/design/analytical-data-modeling.md).
 
-# 2. Kiến trúc: nhìn như một nhà hàng
+# 2. Architecture: think of a restaurant
 
-Cách dễ nhất để hình dung pipeline là một nhà hàng. **Nguyên liệu** (dữ liệu thô) về kho, được **sơ chế** (làm sạch, chuẩn hóa), **nấu** (áp dụng logic nghiệp vụ), rồi **bày đĩa** (star schema) cho khách ăn (dashboard). Còn một quản lý đứng ngoài lo lịch, và một người kiểm tra chất lượng ở mọi công đoạn.
+The easiest way to picture the pipeline is a restaurant. **Ingredients** (raw data) arrive at the storeroom, get **prepped** (cleaned, standardized), **cooked** (business logic applied), then **plated** (star schema) for the guests (dashboards). A manager stands outside and handles the schedule, and a quality inspector checks every stage.
 
-## A. Bức tranh lớn
+## A. The big picture
 
-Một đường chính từ trái sang phải. Hai khối phía dưới không chứa dữ liệu mà điều khiển các khối còn lại.
+One main path from left to right. The two blocks at the bottom hold no data; they control the other blocks.
 
 ```mermaid
 flowchart LR
-  SRC[("Nguồn<br/>CSDL OLTP")]
-  ING["Nạp dữ liệu<br/>(ingestion)"]
+  SRC[("Source<br/>OLTP database")]
+  ING["Ingestion"]
 
   SRC <-->|"Extract"| ING
   ING -->|"Load"| RAW
 
   subgraph DWH["Snowflake"]
     direction LR
-    subgraph L1["Dữ liệu thô của CSDL nguồn"]
+    subgraph L1["Raw data from the source database"]
       RAW["Raw"]
     end
-    subgraph L2["Chuẩn hóa"]
+    subgraph L2["Standardization"]
       STG["Staging"]
     end
     subgraph L3["Star schema"]
@@ -60,12 +60,12 @@ flowchart LR
   BI["BI<br/>Dashboard"]
   MART --> BI
 
-  TRF["Biến đổi & chất lượng dữ liệu"]
+  TRF["Transformation & data quality"]
   TRF -.- RAW
   TRF -.- STG
   TRF -.- MART
 
-  ORC["Điều phối & CI/CD"]
+  ORC["Orchestration & CI/CD"]
   ORC -.-> ING
   ORC -.-> TRF
 
@@ -82,33 +82,33 @@ flowchart LR
   class ORC ops
 ```
 
-## B. Gắn với công cụ thật
+## B. Mapped to real tools
 
-Cùng luồng trên, nhưng mỗi ô là một công cụ cụ thể. Bronze, Silver, Gold là cách gọi của kiến trúc Medallion: càng sang phải dữ liệu càng sạch và càng gần câu hỏi nghiệp vụ.
+The same flow, but each box is a specific tool. Bronze, Silver and Gold are the names from the Medallion architecture: the further right, the cleaner the data and the closer it is to the business question.
 
 ```mermaid
 flowchart LR
-  subgraph LOCAL["Máy local - Docker Compose"]
+  subgraph LOCAL["Local machine - Docker Compose"]
     direction TB
-    GEN["Bộ sinh dữ liệu<br/>Python + SQLAlchemy + Faker<br/>seed / stream"]
+    GEN["Data generator<br/>Python + SQLAlchemy + Faker<br/>seed / stream"]
     PG[("PostgreSQL<br/>OLTP - 3NF")]
     GEN -->|insert / update| PG
   end
 
   DLT["dlt<br/>ingestion pipeline"]
 
-  PG -->|"Extract PostgreSQL<br/>Load lần đầu → Incremental"| DLT
-  DLT -->|"Load vào<br/>Snowflake RAW"| RAW
+  PG -->|"Extract PostgreSQL<br/>Initial load → Incremental"| DLT
+  DLT -->|"Load into<br/>Snowflake RAW"| RAW
 
   subgraph SF["Snowflake"]
     direction LR
-    subgraph L1["Dữ liệu thô từ PostgreSQL"]
+    subgraph L1["Raw data from PostgreSQL"]
       RAW["Raw<br/>(Bronze)"]
     end
-    subgraph L2["Chuẩn hóa"]
+    subgraph L2["Standardization"]
       STG["Staging<br/>(Silver)"]
     end
-    subgraph L3["Logic nghiệp vụ"]
+    subgraph L3["Business logic"]
       INT["Intermediate<br/>(Silver)"]
     end
     subgraph L4["Star schema - Kimball"]
@@ -117,24 +117,24 @@ flowchart LR
     RAW --> STG --> INT --> MART
   end
 
-  BI["Preset<br/>Dashboard Revenue,<br/>Product, Store"]
+  BI["Preset<br/>Revenue, Product,<br/>Store dashboards"]
   MART --> BI
 
-  DBT["dbt-core - chạy local<br/>transform + dbt test"]
-  GE["Great Expectations<br/>kiểm tra RAW"]
+  DBT["dbt-core - runs locally<br/>transform + dbt test"]
+  GE["Great Expectations<br/>RAW checks"]
 
   DBT -.- STG
   DBT -.- INT
   DBT -.- MART
   GE -.- RAW
 
-  DAG["Dagster<br/>dagster-dlt + dagster-dbt<br/>asset, job, lịch chạy"]
+  DAG["Dagster<br/>dagster-dlt + dagster-dbt<br/>assets, jobs, schedules"]
   CI["GitHub Actions<br/>ruff + dbt slim CI"]
 
-  DAG ==>|điều phối| DLT
+  DAG ==>|orchestrates| DLT
   DAG ==> GE
   DAG ==> DBT
-  CI -.->|kiểm tra PR| DBT
+  CI -.->|checks PRs| DBT
 
   classDef src fill:#C62828,stroke:#8E0000,color:#FFFFFF
   classDef layer fill:#BBDEFB,stroke:#1565C0,color:#0D47A1
@@ -149,36 +149,36 @@ flowchart LR
   class DAG,CI ops
 ```
 
-# 3. Những quyết định đáng kể
+# 3. Key decisions
 
-Vài lựa chọn quyết định hình dạng của dự án, và lý do:
+A few choices shape the project. Here they are, with the reasons:
 
-- **RAW chỉ ghi thêm, không bao giờ ghi đè.** Khi giá một sản phẩm đổi, dlt thêm một dòng mới thay vì sửa dòng cũ. Nhờ vậy lịch sử không mất, và đó là nguyên liệu để dựng SCD2. Cái giá: xóa RAW là mất lịch sử vĩnh viễn, nên mọi lệnh có thể xóa RAW đều được cảnh báo trong tài liệu.
-- **SCD2 tự xây bằng window function, không dùng `dbt snapshot`.** Với dữ liệu append-only, so sánh dòng hiện tại với dòng liền trước (`LAG`) cho ra các khoảng thời gian hiệu lực mà vẫn kiểm soát được từng bước. Một giao dịch luôn được gắn với giá vốn **của đúng thời điểm bán**.
-- **Chỉ giao dịch `completed` đi vào phân tích.** Bộ lọc nằm ở staging, từ tầng sau không ai phải nhớ đến cột `status`.
-- **Dữ liệu đến trễ không viết logic vá riêng.** Dòng fact không khớp được dimension sẽ mang khóa `-2` ("Unknown"), và được sửa bằng cách dựng lại bảng fact (`--full-refresh`) chứ không phức tạp hóa bước incremental.
-- **Mọi thay đổi đi qua pull request.** CI chạy dbt trên một database riêng, chỉ build phần bị đổi (slim CI), nên không đụng dữ liệu thật.
+- **RAW is append-only and never overwritten.** When a product's price changes, dlt adds a new row instead of editing the old one. History is never lost, and it is the raw material for SCD2. The cost: deleting RAW loses history for good, so every command that can delete RAW carries a warning in the docs.
+- **SCD2 is built by hand with window functions, not `dbt snapshot`.** With append-only data, comparing each row with the previous one (`LAG`) yields validity ranges while keeping every step under control. A transaction is always tied to the cost of goods **at the exact time of sale**.
+- **Only `completed` transactions reach analytics.** The filter sits in staging, so no later layer has to remember the `status` column.
+- **No special patch logic for late-arriving data.** A fact row that cannot match a dimension gets key `-2` ("Unknown"). It is fixed by rebuilding the fact table (`--full-refresh`) instead of complicating the incremental step.
+- **Every change goes through a pull request.** CI runs dbt against a separate database and builds only what changed (slim CI), so it never touches real data.
 
-# 4. Dự án gồm những gì
+# 4. What the project includes
 
-Hình dưới là cùng pipeline nhìn theo công cụ: dữ liệu đi từ trái sang phải ở hàng giữa, dbt dựng các tầng Snowflake ở hàng dưới, Dagster và GitHub CI nằm phía trên làm lớp điều khiển.
+The image below shows the same pipeline by tool: data flows left to right in the middle row, dbt builds the Snowflake layers in the bottom row, and Dagster and GitHub CI sit on top as the control layer.
 
-![Kiến trúc công cụ RetailPulse](./assets/diagrams/retailpulse-tool.png)
+![RetailPulse tool architecture](./assets/diagrams/retailpulse-tool.png)
 
-> Ảnh vẽ từ bản thiết kế ban đầu nên khác thực tế ở ba điểm: CI hiện có `ruff`, `pytest` và slim CI (chưa có `sqlfluff`, chưa tự deploy); dbt không dùng snapshot (SCD2 tự xây bằng window function); Great Expectations chưa có trong ảnh.
+> The image comes from the original design, so it differs from reality in three ways: CI now has `ruff`, `pytest` and slim CI (no `sqlfluff` yet, no automatic deploy yet); dbt does not use snapshots (SCD2 is built by hand with window functions); Great Expectations is not in the image yet.
 
-| Công cụ | Vai trò |
+| Tool | Role |
 | --- | --- |
-| Python generator (SQLAlchemy, Faker) | Seed dữ liệu lịch sử, mô phỏng đổi giá, đổi cửa hàng nhân viên và bán hàng mới |
-| PostgreSQL 16 (Docker Compose) | CSDL nguồn OLTP, 3NF |
-| dlt | Nạp incremental từ PostgreSQL vào Snowflake RAW |
-| Snowflake | Các tầng RAW, staging, intermediate, marts |
-| dbt Core | Staging, intermediate, marts, dimension SCD2, test |
-| Dagster | Điều phối dlt, dbt và kiểm tra chất lượng thành asset, job, lịch chạy hằng ngày |
-| Preset | Dashboard BI trên marts |
-| Great Expectations | Kiểm tra chất lượng dữ liệu RAW |
-| GitHub Actions | Lint `ruff`, `pytest` với PostgreSQL, slim CI cho dbt, bảo vệ nhánh `main` |
+| Python generator (SQLAlchemy, Faker) | Seeds historical data, simulates price changes, employee store transfers and new sales |
+| PostgreSQL 16 (Docker Compose) | OLTP source database, 3NF |
+| dlt | Incremental loads from PostgreSQL into Snowflake RAW |
+| Snowflake | RAW, staging, intermediate and marts layers |
+| dbt Core | Staging, intermediate, marts, SCD2 dimensions, tests |
+| Dagster | Orchestrates dlt, dbt and quality checks as assets, jobs and a daily schedule |
+| Preset | BI dashboards on the marts |
+| Great Expectations | Data quality checks on RAW |
+| GitHub Actions | `ruff` lint, `pytest` with PostgreSQL, slim CI for dbt, `main` branch protection |
 
-CI có `ruff`, `pytest` và slim CI cho dbt; chưa có CD và `sqlfluff`. Chạy `make check` trước khi mở PR.
+CI has `ruff`, `pytest` and slim CI for dbt; there is no CD or `sqlfluff` yet. Run `make check` before opening a PR.
 
-Muốn chạy thử? Bắt đầu từ [docs/README.md](./docs/README.md): có lộ trình theo phase và các lệnh chạy nhanh.
+Want to try it? Start at [docs/README.md](./docs/README.md): it has the phase roadmap and quick-start commands.

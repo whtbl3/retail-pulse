@@ -4,7 +4,7 @@
 WITH versions AS (
     SELECT
         employee_id,
-        -- Type 1: luôn lấy giá trị mới nhất của nhân viên
+        -- Type 1: always the employee's latest value
         CONCAT(
             FIRST_VALUE(first_name) {{ w_latest }}, ' ',
             FIRST_VALUE(last_name)  {{ w_latest }}
@@ -13,7 +13,7 @@ WITH versions AS (
         FIRST_VALUE(address)    {{ w_latest }} AS address,
         FIRST_VALUE(start_date) {{ w_latest }} AS start_date,
         FIRST_VALUE(end_date)   {{ w_latest }} AS end_date,
-        -- Type 2: chỉ store_id
+        -- Type 2: store_id only
         store_id,
         updated_at,
         LAG(store_id)   {{ w_hist }} AS prev_store_id,

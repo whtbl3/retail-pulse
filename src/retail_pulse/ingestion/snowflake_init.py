@@ -1,4 +1,4 @@
-"""Khởi tạo Snowflake (warehouse, database, role, user, CI) từ infras/snowflake/init.sql."""
+"""Set up Snowflake (warehouse, database, roles, users, CI) from infras/snowflake/init.sql."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 
 SQL_FILE = Path(__file__).parents[3] / "infras" / "snowflake" / "init.sql"
-KEY_DIR = Path(".snowflake")  # đã nằm trong .gitignore
-# user Snowflake -> tên file key; placeholder trong init.sql là __<USER>_PUBLIC_KEY__
+KEY_DIR = Path(".snowflake")  # already in .gitignore
+# Snowflake user -> key file name; the placeholder in init.sql is __<USER>_PUBLIC_KEY__
 USERS = {
     "DLT_LOADER": "dlt_loader",
     "DBT_TRANSFORMER": "dbt_transformer",
@@ -18,7 +18,7 @@ USERS = {
 
 
 def load_statements(keys: dict[str, str]) -> list[str]:
-    """Bỏ chú thích cả dòng, thay public key của từng user, tách theo dấu chấm phẩy."""
+    """Drop full-line comments, substitute each user's public key, split on semicolons."""
     lines = [ln for ln in SQL_FILE.read_text().splitlines() if not ln.lstrip().startswith("--")]
     sql = "\n".join(lines)
     for user, key in keys.items():
@@ -27,12 +27,12 @@ def load_statements(keys: dict[str, str]) -> list[str]:
 
 
 def read_public_key(path: Path) -> str:
-    """Public key dạng PEM -> một dòng base64 (bỏ dòng -----BEGIN/END-----)."""
+    """PEM public key -> one base64 line (drops the -----BEGIN/END----- lines)."""
     return "".join(ln for ln in path.read_text().splitlines() if "-----" not in ln).strip()
 
 
 def ensure_keys(public_key: Path) -> None:
-    """Có .pub thì dùng; chỉ có .p8 thì suy ra .pub; chưa có gì thì tạo cặp mới."""
+    """Use .pub if present; derive .pub from a lone .p8; otherwise create a new pair."""
     from cryptography.hazmat.primitives import serialization as ser
     from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -40,24 +40,24 @@ def ensure_keys(public_key: Path) -> None:
     public_key.parent.mkdir(parents=True, exist_ok=True)
     if private_key.exists():
         key = ser.load_pem_private_key(private_key.read_bytes(), password=None)
-        print(f"Dùng private key có sẵn {private_key}, suy ra {public_key}")
+        print(f"Using existing private key {private_key}, derived {public_key}")
     else:
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         private_key.write_bytes(
             key.private_bytes(ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption())
         )
         private_key.chmod(0o600)
-        print(f"Đã tạo cặp key mới: {private_key}")
+        print(f"Created new key pair: {private_key}")
     public_key.write_bytes(
         key.public_key().public_bytes(ser.Encoding.PEM, ser.PublicFormat.SubjectPublicKeyInfo)
     )
 
 
 def admin_settings() -> dict[str, str]:
-    """Tài khoản ACCOUNTADMIN lấy từ biến môi trường hoặc .env.
+    """ACCOUNTADMIN credentials from environment variables or .env.
 
-    Cần SNOWFLAKE_ACCOUNT, SNOWFLAKE_ADMIN_USER, SNOWFLAKE_ADMIN_PASSWORD. Thiếu SNOWFLAKE_ACCOUNT
-    thì dùng `host` trong .dlt/secrets.toml (cùng tài khoản Snowflake với dlt).
+    Needs SNOWFLAKE_ACCOUNT, SNOWFLAKE_ADMIN_USER, SNOWFLAKE_ADMIN_PASSWORD. If SNOWFLAKE_ACCOUNT
+    is missing, it uses `host` from .dlt/secrets.toml (the same Snowflake account as dlt).
     """
     from dotenv import dotenv_values
 
@@ -72,8 +72,8 @@ def admin_settings() -> dict[str, str]:
     missing = [k for k in needed if not values.get(k)]
     if missing:
         raise SystemExit(
-            f"Thiếu {', '.join(missing)}. Đặt trong .env hoặc `export` trước khi chạy "
-            "(tài khoản ACCOUNTADMIN, không phải DLT_LOADER)."
+            f"Missing {', '.join(missing)}. Set them in .env or `export` them before running "
+            "(the ACCOUNTADMIN account, not DLT_LOADER)."
         )
     return {k: values[k] for k in needed}
 
@@ -85,9 +85,9 @@ def mask(stmt: str, keys: dict[str, str]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Khởi tạo Snowflake cho RetailPulse")
+    parser = argparse.ArgumentParser(description="Set up Snowflake for RetailPulse")
     parser.add_argument("--key-dir", type=Path, default=KEY_DIR)
-    parser.add_argument("--dry-run", action="store_true", help="In các câu lệnh, không kết nối")
+    parser.add_argument("--dry-run", action="store_true", help="Print statements, do not connect")
     args = parser.parse_args()
 
     keys: dict[str, str] = {}
@@ -95,16 +95,16 @@ def main() -> None:
         pub = args.key_dir / f"{name}.pub"
         if not pub.exists() and not args.dry_run:
             ensure_keys(pub)
-        keys[user] = read_public_key(pub) if pub.exists() else "<public key>"  # dry-run chưa có key
+        keys[user] = read_public_key(pub) if pub.exists() else "<public key>"  # dry-run: no key yet
     statements = load_statements(keys)
 
     if args.dry_run:
         for i, stmt in enumerate(statements, 1):
             print(f"-- [{i}/{len(statements)}]\n{mask(stmt, keys)};\n")
-        print(f"Dry-run: {len(statements)} câu lệnh, chưa kết nối Snowflake.")
+        print(f"Dry-run: {len(statements)} statements, not connected to Snowflake.")
         return
 
-    import snowflake.connector  # import muộn: dry-run không cần kết nối
+    import snowflake.connector  # lazy import: dry-run needs no connection
 
     admin = admin_settings()
     conn = snowflake.connector.connect(
