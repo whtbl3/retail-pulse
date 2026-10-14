@@ -28,7 +28,7 @@ FROM parts
 
 UNION ALL
 
--- Thành viên Unknown cho khóa chưa có trong dimension
+-- Unknown member for keys not yet in the dimension
 SELECT
     -2        AS time_key,
     NULL      AS time_of_day,

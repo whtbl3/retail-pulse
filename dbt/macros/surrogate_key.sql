@@ -1,4 +1,4 @@
-{# Khóa thay thế kiểu số, ổn định qua các lần full refresh. HASH của Snowflake trả về số nguyên 64 bit. #}
+{# Numeric surrogate key, stable across full refreshes. Snowflake HASH returns a 64-bit integer. #}
 {% macro surrogate_key(columns) -%}
     hash({{ columns | join(', ') }})
 {%- endmacro %}

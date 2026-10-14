@@ -1,19 +1,19 @@
-"""PreToolUse hook: chặn Claude sửa hoặc tạo file chứa bí mật.
+"""PreToolUse hook: stop Claude from editing or creating files that hold secrets.
 
-Claude Code gửi JSON của lệnh gọi tool qua stdin. Thoát mã 2 thì lệnh bị chặn và stderr được
-gửi lại cho Claude làm lý do. Thoát mã 0 thì cho qua.
+Claude Code sends the tool call as JSON on stdin. Exit code 2 blocks the call and stderr is
+sent back to Claude as the reason. Exit code 0 lets it through.
 """
 
 import json
 import sys
 from pathlib import PurePosixPath
 
-# File mẫu được commit nên sửa bình thường
+# Example files are committed, so editing them is fine
 ALLOWED_SUFFIXES = (".example",)
 SECRET_NAMES = {".env", "secrets.toml", "profiles.yml"}
 SECRET_SUFFIXES = (".p8", ".pem")
 SECRET_DIRS = {".snowflake"}
-# Profile của CI chỉ dùng env_var(), không có bí mật
+# The CI profile only uses env_var() and holds no secrets
 ALLOWED_PATHS = ("dbt/ci/profiles.yml",)
 
 

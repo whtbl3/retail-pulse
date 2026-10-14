@@ -1,104 +1,104 @@
-# Phase 0 — Môi trường phát triển
+# Phase 0: Development environment
 
-Mục tiêu: có đủ công cụ để chạy mọi phase sau trên máy local.
+Goal: have every tool needed to run all later phases on a local machine.
 
-| Thành phần | Yêu cầu |
+| Component | Requirement |
 |---|---|
-| Hệ điều hành | Ubuntu hoặc WSL2 |
-| Python | 3.12 (ghim trong `.python-version`) |
-| Quản lý thư viện | [uv](https://docs.astral.sh/uv/); `uv.lock` là nguồn chuẩn |
-| Container | Docker + Docker Compose (chạy PostgreSQL) |
+| Operating system | Ubuntu or WSL2 |
+| Python | 3.12 (pinned in `.python-version`) |
+| Package manager | [uv](https://docs.astral.sh/uv/); `uv.lock` is the source of truth |
+| Container | Docker + Docker Compose (runs PostgreSQL) |
 
-## 1. Cài uv
+## 1. Install uv
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv --version
 ```
 
-*Vì sao uv:* một lệnh dựng đúng môi trường Python 3.12 và đúng phiên bản từng thư viện (khóa trong `uv.lock`).
-*Nếu bỏ qua:* mỗi máy một phiên bản thư viện, lỗi "máy tôi chạy được" rất khó tái hiện.
+*Why uv:* one command builds the right Python 3.12 environment with the exact version of each package (locked in `uv.lock`).
+*If skipped:* every machine ends up with different package versions, and "works on my machine" bugs are very hard to reproduce.
 
-## 2. Cài thư viện và cấu hình
+## 2. Install packages and configure
 
 ```bash
-make install               # = uv sync, cài cả nhóm dev (ruff, pytest, sqlfluff, ...)
-cp .env.example .env       # rồi sửa PG_PASSWORD
+make install               # = uv sync, also installs the dev group (ruff, pytest, sqlfluff, ...)
+cp .env.example .env       # then edit PG_PASSWORD
 ```
 
-*Vì sao `.env`:* giữ thông tin kết nối ngoài code. File này đã nằm trong `.gitignore`, không bao giờ commit.
-*Nếu bỏ qua:* `make up` dừng ngay với thông báo thiếu `PG_USER` hoặc `PG_PASSWORD`.
+*Why `.env`:* it keeps connection details out of the code. The file is already in `.gitignore`. Never commit it.
+*If skipped:* `make up` stops right away with a message that `PG_USER` or `PG_PASSWORD` is missing.
 
-`.env.example` liệt kê đủ mọi biến của dự án, chia nhóm theo phase. Lúc này chỉ cần nhóm PostgreSQL; nhóm Snowflake
-điền khi tới [phase 3](03-ingestion-snowflake.md), mật khẩu Preset khi tới phase 7.
+`.env.example` lists every variable in the project, grouped by phase. For now you only need the PostgreSQL group. Fill in
+the Snowflake group when you reach [phase 3](03-ingestion-snowflake.md), and the Preset password at phase 7.
 
-Danh sách thư viện nằm ở `pyproject.toml`, theo vai trò: generator (`sqlalchemy`, `psycopg`, `faker`), ingestion
+The package list is in `pyproject.toml`, grouped by role: generator (`sqlalchemy`, `psycopg`, `faker`), ingestion
 (`dlt[snowflake]`), transform (`dbt-core`, `dbt-snowflake`), orchestration (`dagster`, `dagster-dbt`, `dagster-dlt`),
 quality (`great-expectations`), dev (`ruff`, `pytest`, `sqlfluff`, `pre-commit`, `pyrefly`).
 
-## 3. Kiểm tra môi trường
+## 3. Check the environment
 
 ```bash
-make lint   # ruff check --fix + ruff format trên src/
-make test   # bật Postgres rồi chạy pytest (dùng DB tạm, xóa sau khi xong)
+make lint   # ruff check --fix + ruff format on src/
+make test   # start Postgres, then run pytest (uses a temporary DB, dropped afterwards)
 ```
 
-*Vì sao:* biết môi trường đúng trước khi làm tiếp, thay vì gặp lỗi lạ ở phase sau.
-Lưu ý CI kiểm tra cả thư mục `tests/` (`ruff check src tests`), còn `make lint` chỉ chạy trên `src/`.
+*Why:* you know the environment is right before going further, instead of hitting strange errors in a later phase.
+Note that CI also checks the `tests/` folder (`ruff check src tests`), while `make lint` only runs on `src/`.
 
-## Cấu hình và bí mật
+## Configuration and secrets
 
-Mọi thông tin đăng nhập nằm ngoài git. Với mỗi thứ, repo chỉ commit **file mẫu** để bạn biết bên trong có gì, còn
-file thật bạn tự tạo từ mẫu.
+All credentials live outside git. For each one, the repo commits only a **template file** so you know what goes inside.
+You create the real file yourself from the template.
 
-| File thật (không commit) | File mẫu (có commit) | Bên trong có gì | Ai đọc |
+| Real file (not committed) | Template (committed) | What it contains | Who reads it |
 |---|---|---|---|
-| `.env` | `.env.example` | Kết nối PostgreSQL, account Snowflake, đường dẫn key của dbt, tài khoản admin (chỉ lúc khởi tạo), mật khẩu Preset | Python, Docker Compose, dbt, Great Expectations |
-| `.dlt/secrets.toml` | `.dlt/secrets.toml.example` | Credential của user `DLT_LOADER` | dlt |
-| `~/.dbt/profiles.yml` | `dbt/profiles.yml.example` | Cách dbt kết nối Snowflake (chỉ tham chiếu biến môi trường) | dbt |
-| `.snowflake/*.p8` | không có mẫu | Private key của từng user, do `make snowflake-init` sinh ra | dlt, dbt, CI |
-| GitHub Secrets | xem [phase 9](09-dataops-ci.md) | `SNOWFLAKE_ACCOUNT`, `CI_PRIVATE_KEY` | CI |
+| `.env` | `.env.example` | PostgreSQL connection, Snowflake account, dbt key path, admin account (only for setup), Preset password | Python, Docker Compose, dbt, Great Expectations |
+| `.dlt/secrets.toml` | `.dlt/secrets.toml.example` | Credentials of the `DLT_LOADER` user | dlt |
+| `~/.dbt/profiles.yml` | `dbt/profiles.yml.example` | How dbt connects to Snowflake (only references environment variables) | dbt |
+| `.snowflake/*.p8` | no template | Private key of each user, created by `make snowflake-init` | dlt, dbt, CI |
+| GitHub Secrets | see [phase 9](09-dataops-ci.md) | `SNOWFLAKE_ACCOUNT`, `CI_PRIVATE_KEY` | CI |
 
-*Vì sao tách mẫu và bản thật:* người đọc thấy ngay cần cấu hình những gì mà không có bí mật nào lọt lên git.
-*Nếu commit file thật:* repo này public, nên ai cũng đọc được; key hay mật khẩu bị lộ thì phải đổi ngay, xóa
-commit sau đó không thu hồi được.
+*Why split template and real file:* readers see at once what needs configuring, and no secret reaches git.
+*If you commit a real file:* this repo is public, so anyone can read it. A leaked key or password must be rotated at once.
+Deleting the commit afterwards does not take it back.
 
-Kiểm tra nhanh trước khi commit: `git status` không được liệt kê `.env`, `.dlt/secrets.toml` hay file `.p8`.
+Quick check before committing: `git status` must not list `.env`, `.dlt/secrets.toml` or any `.p8` file.
 
-## Cấu trúc thư mục
+## Folder structure
 
 ```text
 .
-├── Makefile                  # lệnh thường dùng: make help
-├── README.md                 # bài toán, mô hình dữ liệu, kiến trúc
-├── pyproject.toml, uv.lock   # thư viện và phiên bản
-├── .env.example              # mẫu cấu hình: PostgreSQL, Snowflake, Preset (bản thật là .env, không commit)
+├── Makefile                  # common commands: make help
+├── README.md                 # problem, data model, architecture
+├── pyproject.toml, uv.lock   # packages and versions
+├── .env.example              # config template: PostgreSQL, Snowflake, Preset (real file is .env, not committed)
 ├── .github/workflows/        # CI: ci.yml, manifest.yml
-├── assets/diagrams/          # hình dùng trong tài liệu
-├── .dlt/secrets.toml.example # mẫu credential của dlt (bản thật là .dlt/secrets.toml, không commit)
-├── dbt/                      # dự án dbt: models, tests, macros, ci/profiles.yml, profiles.yml.example
+├── assets/diagrams/          # images used in the docs
+├── .dlt/secrets.toml.example # dlt credential template (real file is .dlt/secrets.toml, not committed)
+├── dbt/                      # dbt project: models, tests, macros, ci/profiles.yml, profiles.yml.example
 ├── docs/
-│   ├── README.md             # tổng quan và lộ trình theo phase
-│   ├── Project-Spec.md       # đặc tả chuẩn của dự án
-│   ├── phases/               # hướng dẫn chạy từng phase
-│   └── design/               # thiết kế chi tiết từng thành phần
+│   ├── README.md             # overview and phase roadmap
+│   ├── Project-Spec.md       # the project's reference specification
+│   ├── phases/               # how to run each phase
+│   └── design/               # detailed design of each component
 ├── infras/
 │   ├── docker-compose.yml
 │   ├── postgres/init/01_schema.sql
 │   └── snowflake/init.sql
 ├── src/retail_pulse/
-│   ├── oltp/                 # SQLAlchemy engine và ORM model
+│   ├── oltp/                 # SQLAlchemy engine and ORM models
 │   ├── generator/            # seed.py, stream.py, common.py
-│   ├── ingestion/            # pipeline dlt, dọn RAW, khởi tạo Snowflake
-│   ├── orchestration/        # Dagster: asset dlt và dbt, job, lịch chạy
-│   └── quality/              # Great Expectations kiểm tra RAW
+│   ├── ingestion/            # dlt pipelines, RAW cleanup, Snowflake setup
+│   ├── orchestration/        # Dagster: dlt and dbt assets, jobs, schedules
+│   └── quality/              # Great Expectations checks on RAW
 └── tests/                    # pytest
 ```
 
-## Đọc thêm
+## Further reading
 
-- [uv: làm việc với dự án](https://docs.astral.sh/uv/concepts/projects/layout/) và
-  [`uv sync`](https://docs.astral.sh/uv/concepts/projects/sync/): vì sao có `uv.lock` và cách đồng bộ môi trường.
-- [Ruff](https://docs.astral.sh/ruff/) (lint và format) và [pytest](https://docs.pytest.org/en/stable/).
+- [uv: working on projects](https://docs.astral.sh/uv/concepts/projects/layout/) and
+  [`uv sync`](https://docs.astral.sh/uv/concepts/projects/sync/): why `uv.lock` exists and how to sync the environment.
+- [Ruff](https://docs.astral.sh/ruff/) (lint and format) and [pytest](https://docs.pytest.org/en/stable/).
 
-Tiếp theo: [Phase 1 — PostgreSQL OLTP](01-oltp-database.md).
+Next: [Phase 1: PostgreSQL OLTP](01-oltp-database.md).

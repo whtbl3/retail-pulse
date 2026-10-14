@@ -14,7 +14,7 @@ FROM {{ ref('int_employee_scd2') }}
 
 UNION ALL
 
--- Thành viên Unknown cho khóa chưa có trong dimension (dữ liệu đến trễ)
+-- Unknown member for keys not yet in the dimension (late-arriving data)
 SELECT
     -2                                  AS employee_key,
     -2                                  AS employee_id,

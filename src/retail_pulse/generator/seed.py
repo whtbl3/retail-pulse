@@ -1,11 +1,11 @@
-"""Batch seed: dữ liệu danh mục + lịch sử giao dịch cho Postgres OLTP.
+"""Batch seed: reference data + transaction history for Postgres OLTP.
 
-Luồng dữ liệu (xem docs/design/data-generator.md):
+Data flow (see docs/design/data-generator.md):
 
-    ReferenceDataGenerator.generate()       -> ReferenceDataset   (chỉ business key, chưa có ID)
-    SeedRepository.insert_reference()       -> PersistedIds       (business key -> ID thật)
-    build_seed_context()                    -> SeedContext        (lookup theo ID cho vòng lặp lớn)
-    TransactionGenerator.generate_batches() -> TransactionBatch   (từng lô chờ ghi)
+    ReferenceDataGenerator.generate()       -> ReferenceDataset   (business keys only, no IDs yet)
+    SeedRepository.insert_reference()       -> PersistedIds       (business key -> real ID)
+    build_seed_context()                    -> SeedContext        (ID lookups for the main loop)
+    TransactionGenerator.generate_batches() -> TransactionBatch   (batches waiting to be written)
     SeedRepository.insert_transaction_batch()-> InsertStats
 """
 
@@ -81,14 +81,14 @@ class SeedConfig:
     seed: int = 42
     reset: bool = False
     batch_size: int = 5_000
-    start: date | None = None  # mặc định: ngày cuối của lịch sử = hôm qua
+    start: date | None = None  # default: the last day of history = yesterday
 
     def __post_init__(self) -> None:
         for name in ("days", "stores", "employees_per_store", "products", "batch_size"):
             if getattr(self, name) < 1:
-                raise ValueError(f"{name} phải >= 1")
+                raise ValueError(f"{name} must be >= 1")
         if self.promotions < 0 or self.transactions < 0:
-            raise ValueError("promotions và transactions phải >= 0")
+            raise ValueError("promotions and transactions must be >= 0")
         if self.start is None:
             object.__setattr__(self, "start", datetime.now(TZ).date() - timedelta(days=self.days))
 
@@ -102,7 +102,7 @@ class SeedConfig:
         return self.start_date + timedelta(days=self.days - 1)
 
 
-# ---------------------------------------------------------------- reference data (chưa persist)
+# ---------------------------------------------------------------- reference data (not persisted)
 @dataclass(frozen=True)
 class StoreDraft:
     store_name: str  # business key (unique)
@@ -139,12 +139,12 @@ class PromotionDraft:
     amount: Decimal
     start_date: date
     end_date: date
-    product_skus: tuple[str, ...]  # các sản phẩm được áp dụng
+    product_skus: tuple[str, ...]  # products it applies to
 
 
 @dataclass(frozen=True)
 class ReferenceDataset:
-    recorded_at: datetime  # created_at/updated_at cho toàn bộ dữ liệu danh mục
+    recorded_at: datetime  # created_at/updated_at for all reference data
     payment_methods: list[str]
     categories: list[str]
     brands: list[str]
@@ -161,14 +161,14 @@ class ReferenceDataset:
 
 
 class ReferenceDataGenerator:
-    """Sinh dữ liệu danh mục trong bộ nhớ. Không đụng database."""
+    """Generate reference data in memory. Does not touch the database."""
 
     def __init__(self, config: SeedConfig, rnd: RandomSource) -> None:
         self.config = config
         self.rnd = rnd
 
     def generate(self) -> ReferenceDataset:
-        # Thứ tự gọi random ở đây quyết định dữ liệu sinh ra -> đừng đảo thứ tự các bước
+        # The order of random calls here determines the output -> do not reorder the steps
         brands = [self.rnd.fake_en.unique.company() for _ in range(NUM_BRANDS)]
         stores = self._stores()
         employees = self._employees(stores)
@@ -197,7 +197,7 @@ class ReferenceDataGenerator:
         ]
 
     def _employees(self, stores: list[StoreDraft]) -> list[EmployeeDraft]:
-        """2 người "nòng cốt" mỗi cửa hàng luôn đi làm, số còn lại có thể vào/nghỉ giữa kỳ."""
+        """2 "core" staff per store always work; the rest may join or leave mid-period."""
         rng, fake, cfg = self.rnd.random, self.rnd.fake_vi, self.config
         employees = []
         for store in stores:
@@ -226,14 +226,14 @@ class ReferenceDataGenerator:
         return employees
 
     def _products(self, brands: list[str]) -> list[ProductDraft]:
-        """Giá phân phối log-normal (nhiều hàng rẻ, ít hàng đắt), median ~60k VND."""
+        """Log-normal prices (many cheap items, few expensive ones), median ~60k VND."""
         rng = self.rnd.random
         products = []
         for i in range(1, self.config.products + 1):
             price = min(max(rng.lognormvariate(11, 0.9), 5_000), 5_000_000)
             category = rng.choice(CATEGORIES)
             brand = rng.choice(brands)
-            # Tên sản phẩm luôn bắt đầu bằng đúng thương hiệu của nó (khớp brand_id)
+            # A product name always starts with its own brand (matches brand_id)
             name = f"{brand} {self.rnd.fake_en.word().title()} {rng.choice(PRODUCT_SIZES)}"
             products.append(
                 ProductDraft(
@@ -248,7 +248,7 @@ class ReferenceDataGenerator:
         return products
 
     def _promotions(self, products: list[ProductDraft]) -> list[PromotionDraft]:
-        """Mỗi chương trình kéo dài 7–30 ngày, áp dụng cho 5–20 sản phẩm."""
+        """Each promotion lasts 7-30 days and applies to 5-20 products."""
         rng, cfg = self.rnd.random, self.config
         headers = []
         for _ in range(cfg.promotions):
@@ -263,7 +263,7 @@ class ReferenceDataGenerator:
         promotions = []
         for p_type, amount, p_start, p_end in headers:
             eligible = products
-            if p_type is PromotionType.FIXED_AMOUNT:  # tránh giảm giá lớn hơn giá trị hàng
+            if p_type is PromotionType.FIXED_AMOUNT:  # no discount above the item's value
                 eligible = [p for p in products if p.unit_price >= amount * 4]
             chosen = rng.sample(eligible, k=min(len(eligible), rng.randint(5, 20)))
             promotions.append(
@@ -275,20 +275,20 @@ class ReferenceDataGenerator:
 # ---------------------------------------------------------------- persisted ids & context
 @dataclass(frozen=True)
 class PersistedIds:
-    """Cầu nối business key -> ID do database cấp."""
+    """Maps business keys -> IDs assigned by the database."""
 
     payment_method_ids: dict[str, int]  # method -> id
     category_ids: dict[str, int]  # category_name -> id
     brand_ids: dict[str, int]  # brand_name -> id
     store_ids: dict[str, int]  # store_name -> id
-    employee_ids: list[int]  # cùng thứ tự với dataset.employees (bảng không có business key)
+    employee_ids: list[int]  # same order as dataset.employees (the table has no business key)
     product_ids: dict[str, int]  # product_sku -> id
-    promotion_ids: list[int]  # cùng thứ tự với dataset.promotions
+    promotion_ids: list[int]  # same order as dataset.promotions
 
 
 @dataclass(frozen=True)
 class SeedContext:
-    """Lookup đã index sẵn theo ID, đúng thứ TransactionGenerator cần."""
+    """Lookups pre-indexed by ID, exactly what TransactionGenerator needs."""
 
     start: date
     days: int
@@ -331,14 +331,14 @@ def build_seed_context(
 # ---------------------------------------------------------------- transactions
 @dataclass(frozen=True)
 class TransactionBatch:
-    """Một lô giao dịch chờ ghi. items[i] là các dòng hàng của transactions[i]."""
+    """A batch of transactions to write. items[i] are the line items of transactions[i]."""
 
     transactions: list[dict]
     items: list[list[dict]]
 
 
 class TransactionGenerator:
-    """Logic bán hàng: chỉ đọc SeedContext, không chạm database."""
+    """Sales logic: reads only SeedContext, never touches the database."""
 
     def __init__(self, config: SeedConfig, rnd: RandomSource) -> None:
         self.config = config
@@ -361,7 +361,7 @@ class TransactionGenerator:
         product_ids = list(ctx.product_prices)
         now = datetime.now(TZ)
 
-        # Chia tổng số giao dịch theo cửa hàng × ngày, cuối tuần đông gấp 1,4 lần
+        # Split the total transactions by store x day; weekends are 1.4x busier
         day_factors = [
             1.4 if (ctx.start + timedelta(days=o)).weekday() >= 5 else 1.0 for o in range(ctx.days)
         ]
@@ -388,7 +388,7 @@ class TransactionGenerator:
                 n_tx = max(0, round(rng.gauss(mean, mean * 0.15)))
 
                 for _ in range(n_tx):
-                    # Mở cửa 7h–22h, đông nhất vào buổi chiều tối
+                    # Open 7:00-22:00, busiest in the late afternoon and evening
                     hour = min(21, max(7, int(rng.triangular(7, 22, 18))))
                     ts = datetime.combine(
                         day, time(hour, rng.randint(0, 59), rng.randint(0, 59)), TZ
@@ -406,7 +406,7 @@ class TransactionGenerator:
         ts: datetime,
         now: datetime,
     ) -> tuple[dict, list[dict]]:
-        """Một giao dịch tại thời điểm ts. Thứ tự gọi random giữ nguyên để seed tái lập được."""
+        """One transaction at time ts. Random call order is fixed so seeds stay reproducible."""
         rng = self.rng
         statuses, status_weights = list(STATUS_WEIGHTS), list(STATUS_WEIGHTS.values())
         status = rng.choices(statuses, status_weights)[0]
@@ -433,9 +433,9 @@ class TransactionGenerator:
     def generate_at(
         self, ctx: SeedContext, timestamps: list[datetime], now: datetime
     ) -> TransactionBatch:
-        """Mỗi timestamp một giao dịch ở cửa hàng ngẫu nhiên có nhân viên đang làm hôm đó.
+        """One transaction per timestamp, at a random store with staff working that day.
 
-        Dùng cho stream.py (bán thêm sau lần seed); dùng cùng luật bán hàng với seed.
+        Used by stream.py (extra sales after the seed); applies the same sales rules as seed.
         """
         product_ids = list(ctx.product_prices)
         transactions: list[dict] = []
@@ -486,7 +486,7 @@ class TransactionGenerator:
                     "product_id": pid,
                     "promotion_id": promo_id,
                     "quantity": rng.choices([1, 2, 3, 4, 5], weights=[60, 22, 10, 5, 3])[0],
-                    "regular_price": price,  # chụp giá tại lúc bán
+                    "regular_price": price,  # snapshot of the price at sale time
                     "coupon_amount": coupon,
                     "created_at": ts,
                     "updated_at": ts,
@@ -503,25 +503,25 @@ class InsertStats:
 
 
 def bulk_insert(session: Session, model, rows: list[dict], pk: str = "id") -> list[int]:
-    """Insert nhiều dòng, trả về khóa chính theo đúng thứ tự của rows."""
+    """Insert many rows and return their primary keys in the order of rows."""
     stmt = insert(model).returning(getattr(model, pk), sort_by_parameter_order=True)
     return list(session.scalars(stmt, rows))
 
 
 class SeedRepository:
-    """Nơi duy nhất của seed được nói chuyện với database."""
+    """The only place in seed allowed to talk to the database."""
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
     def insert_reference(self, dataset: ReferenceDataset, *, reset: bool) -> PersistedIds:
-        """Ghi toàn bộ danh mục trong một transaction (gồm cả bước reset nếu có)."""
+        """Write all reference data in one transaction (including the reset step, if any)."""
         ts = {"created_at": dataset.recorded_at, "updated_at": dataset.recorded_at}
         with self.session_factory.begin() as session:
             if reset:
                 session.execute(text(TRUNCATE_SQL))
             elif session.scalar(select(func.count()).select_from(Store)):
-                raise SystemExit("Database đã có dữ liệu. Chạy `make reseed` để xóa và seed lại.")
+                raise SystemExit("Database already has data. Run `make reseed` to wipe and reseed.")
 
             payment_ids = bulk_insert(
                 session, PaymentMethod, [{"method": m, **ts} for m in dataset.payment_methods]
@@ -621,7 +621,7 @@ class SeedRepository:
         )
 
     def insert_transaction_batch(self, batch: TransactionBatch) -> InsertStats:
-        """Một batch = một transaction DB: lỗi thì rollback nguyên lô."""
+        """One batch = one DB transaction: on error the whole batch rolls back."""
         with self.session_factory.begin() as session:
             tx_ids = bulk_insert(session, SalesTransaction, batch.transactions, pk="transaction_id")
             rows = [
@@ -635,7 +635,7 @@ class SeedRepository:
 
 # ---------------------------------------------------------------- coordinator
 class SeedCoordinator:
-    """Nối các bước theo đúng thứ tự, không chứa logic sinh dữ liệu."""
+    """Chains the steps in order; holds no data generation logic."""
 
     def __init__(
         self,
@@ -680,20 +680,20 @@ class SeedCoordinator:
 
 # ---------------------------------------------------------------- entrypoint
 def parse_args(argv: list[str] | None = None) -> SeedConfig:
-    parser = argparse.ArgumentParser(description="Seed dữ liệu lịch sử cho Postgres OLTP")
+    parser = argparse.ArgumentParser(description="Seed historical data into Postgres OLTP")
     parser.add_argument("--days", type=int, default=365)
     parser.add_argument("--stores", type=int, default=10)
     parser.add_argument("--employees-per-store", type=int, default=8)
     parser.add_argument("--products", type=int, default=500)
     parser.add_argument("--promotions", type=int, default=40)
-    parser.add_argument("--seed", type=int, default=42, help="Random seed để tái lập dữ liệu")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible data")
     parser.add_argument(
         "--transactions",
         type=int,
         default=100_000,
-        help="Tổng số giao dịch cần sinh (số dòng item ≈ 2,8 lần)",
+        help="Total transactions to generate (item rows ~2.8x)",
     )
-    parser.add_argument("--reset", action="store_true", help="TRUNCATE toàn bộ trước khi seed")
+    parser.add_argument("--reset", action="store_true", help="TRUNCATE everything before seeding")
     args = parser.parse_args(argv)
     try:
         return SeedConfig(

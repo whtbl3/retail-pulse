@@ -1,53 +1,53 @@
-# Phase 2 — Seed dữ liệu lịch sử (`seed.py`)
+# Phase 2: Historical data seed (`seed.py`)
 
-Mục tiêu: nạp một bộ dữ liệu nền thực tế và **tái lập được** (cùng `--seed` thì cùng dữ liệu).
-Thiết kế chi tiết: [design/data-generator.md](../design/data-generator.md) (Phần 1).
+Goal: load a realistic, **reproducible** base dataset (the same `--seed` gives the same data).
+Detailed design: [design/data-generator.md](../design/data-generator.md) (Part 1).
 
-## Chạy
+## Run
 
 ```bash
-make seed                          # 365 ngày, ~100k giao dịch
-make seed DAYS=90 ROWS=20000       # nhỏ hơn để thử nhanh
-make reseed                        # xóa dữ liệu cũ rồi seed lại
-uv run seed --help                 # xem mọi tham số
+make seed                          # 365 days, ~100k transactions
+make seed DAYS=90 ROWS=20000       # smaller, for a quick test
+make reseed                        # delete old data, then seed again
+uv run seed --help                 # show every option
 ```
 
-> **Cẩn thận, `make seed` và `make reseed` chạy `clean-raw` trước.** Nghĩa là xóa mọi bảng trong RAW trên Snowflake và
-> state dlt, kể cả lịch sử SCD2 của `product` và `employee`. Lý do: seed làm Postgres thành bộ dữ liệu mới, RAW cũ không
-> còn khớp nguồn. Hậu quả nếu chạy nhầm: mất lịch sử đổi giá và đổi cửa hàng, không khôi phục được vì Postgres chỉ
-> giữ trạng thái hiện tại. Thứ tự này cũng nghĩa là `make seed` xóa RAW **trước khi** `seed` kiểm tra DB đã có dữ liệu
-> chưa; nếu DB đã có dữ liệu, RAW vẫn bị xóa còn seed thì từ chối. Muốn seed mà không đụng RAW thì chạy thẳng
-> `uv run seed`.
+> **Careful: `make seed` and `make reseed` run `clean-raw` first.** That deletes every table in RAW on Snowflake and
+> the dlt state, including the SCD2 history of `product` and `employee`. Reason: seeding turns Postgres into a new
+> dataset, so the old RAW no longer matches the source. If you run it by mistake, you lose the price change and store
+> transfer history. It cannot be recovered, because Postgres only keeps the current state. This order also means
+> `make seed` deletes RAW **before** `seed` checks whether the DB already has data. If the DB has data, RAW is still
+> deleted and seed refuses to run. To seed without touching RAW, run `uv run seed` directly.
 
-`seed` từ chối chạy nếu database đã có dữ liệu, trừ khi có `--reset` (`make reseed`). *Vì sao:* tránh trộn dữ liệu mới với cũ.
+`seed` refuses to run if the database already has data, unless you pass `--reset` (`make reseed`). *Why:* to avoid mixing new and old data.
 
-## Kết quả mặc định
+## Default result
 
-| Bảng | Số dòng |
+| Table | Rows |
 |---|---|
 | `store` | 10 |
-| `employee` | 80 (8 mỗi cửa hàng, có người vào và nghỉ giữa kỳ) |
+| `employee` | 80 (8 per store, some join and leave during the period) |
 | `category` / `brand` / `payment_method` | 10 / 30 / 4 |
-| `product` | 500 (`product_name` luôn bắt đầu bằng tên brand của nó) |
-| `promotion` | 40, mỗi chương trình áp cho 5–20 sản phẩm |
-| `sales_transaction` | ~100.000, rải trong 365 ngày tới hôm qua |
-| `sales_transaction_item` | ~2,8 dòng mỗi giao dịch |
+| `product` | 500 (`product_name` always starts with its brand name) |
+| `promotion` | 40, each applied to 5–20 products |
+| `sales_transaction` | ~100,000, spread over the 365 days up to yesterday |
+| `sales_transaction_item` | ~2.8 lines per transaction |
 
-Luật sinh dữ liệu chính (để số liệu giống thật): cuối tuần đông hơn 1,4 lần; giờ bán 7h–22h, đông nhất buổi tối;
-nhân viên chỉ bán ở cửa hàng của mình và trong thời gian đang làm việc; promotion chỉ áp khi còn hiệu lực;
-`regular_price` là giá tại thời điểm bán.
+Main generation rules (so the numbers look real): weekends are 1.4 times busier; sales hours are 7:00–22:00, busiest in
+the evening; employees only sell at their own store and while employed; a promotion only applies while it is active;
+`regular_price` is the price at the time of sale.
 
-## Kiểm tra
+## Check
 
 ```sql
 SELECT count(*) FROM retail.sales_transaction;
 SELECT min(transaction_ts), max(transaction_ts) FROM retail.sales_transaction;
 ```
 
-Test tự động: `tests/test_seed.py` (xem [Testing](../design/data-generator.md#testing)).
+Automated tests: `tests/test_seed.py` (see [Testing](../design/data-generator.md#testing)).
 
-## Đọc thêm
+## Further reading
 
-- [Faker](https://faker.readthedocs.io/en/master/): thư viện sinh tên, địa chỉ giả; vì sao có `--seed` để tái lập.
+- [Faker](https://faker.readthedocs.io/en/master/): the library that generates fake names and addresses; why `--seed` makes runs reproducible.
 
-Tiếp theo: [Phase 3 — Ingestion sang Snowflake](03-ingestion-snowflake.md).
+Next: [Phase 3: Ingestion to Snowflake](03-ingestion-snowflake.md).

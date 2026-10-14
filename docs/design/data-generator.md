@@ -1,25 +1,25 @@
-# Bộ sinh dữ liệu: `seed.py` và `stream.py`
+# Data generator: `seed.py` and `stream.py`
 
-Khi tách một script sinh dữ liệu thành nhiều class, câu hỏi khó nhất không phải "đặt tên class là gì" mà là:
+When splitting a data generation script into several classes, the hardest question is not "what should the classes be called" but:
 
-> **Ở mỗi bước, dữ liệu đang ở dạng nào, nằm ở đâu, và bước sau cần nhận gì?**
+> **At each step, what shape is the data in, where does it live, and what does the next step need to receive?**
 
-Dự án có hai job sinh dữ liệu với hai mục đích khác nhau, nên thiết kế cũng khác:
+The project has two data generation jobs with two different purposes, so their designs differ too:
 
 | | `seed.py` | `stream.py` |
 |---|---|---|
-| Mục đích | Dựng dữ liệu nền ban đầu | Mô phỏng thay đổi trên dữ liệu có sẵn, và (tùy chọn) bán hàng mới |
-| Khối lượng | Lớn (~100k giao dịch) | Nhỏ (vài product mỗi lần, vài trăm giao dịch nếu bật `--sales`) |
-| Bảng bị ảnh hưởng | Tất cả | `product`, `employee`, và `sales_transaction*` khi bật `--sales` |
-| Thao tác | `INSERT` | chủ yếu `UPDATE`; `INSERT` giao dịch khi bật `--sales` |
+| Purpose | Build the initial base data | Simulate changes on existing data, and (optionally) new sales |
+| Volume | Large (~100k transactions) | Small (a few products per run, a few hundred transactions if `--sales` is on) |
+| Tables affected | All | `product`, `employee`, and `sales_transaction*` when `--sales` is on |
+| Operation | `INSERT` | mostly `UPDATE`; `INSERT` of transactions when `--sales` is on |
 
-Cách vận hành từng job nằm ở [phase 2](../phases/02-historical-seed.md) và [phase 4](../phases/04-product-change-simulator.md).
-Bài này giải thích **vì sao code được chia như vậy**. Cả hai job theo chung một cách nhìn: mỗi thành phần có **state** (giữ gì),
-**behavior** (làm gì) và **output** (trả ra gì).
+How to run each job is in [phase 2](../phases/02-historical-seed.md) and [phase 4](../phases/04-product-change-simulator.md).
+This page explains **why the code is split the way it is**. Both jobs share one way of looking at things: each component has **state** (what it holds),
+**behavior** (what it does) and **output** (what it returns).
 
-# Phần 1: `seed.py`
+# Part 1: `seed.py`
 
-## Bức tranh tổng
+## The big picture
 
 ```mermaid
 flowchart LR
@@ -30,77 +30,77 @@ flowchart LR
     E -->|insert_transaction_batch| F[(PostgreSQL)]
 ```
 
-| Bước | Thành phần | Input | Output |
+| Step | Component | Input | Output |
 |---|---|---|---|
 | 1 | `ReferenceDataGenerator.generate()` | `SeedConfig`, `RandomSource` | `ReferenceDataset` |
 | 2 | `SeedRepository.insert_reference()` | `ReferenceDataset` | `PersistedIds` |
 | 3 | `build_seed_context()` | dataset, ids, config | `SeedContext` |
-| 4 | `TransactionGenerator.generate_batches()` | `SeedContext` | iterator của `TransactionBatch` |
+| 4 | `TransactionGenerator.generate_batches()` | `SeedContext` | iterator of `TransactionBatch` |
 | 5 | `SeedRepository.insert_transaction_batch()` | `TransactionBatch` | `InsertStats` |
 
-`SeedCoordinator.run()` chỉ nối năm bước này theo đúng thứ tự, không chứa logic sinh dữ liệu.
+`SeedCoordinator.run()` only chains these five steps in the right order; it holds no data generation logic.
 
-Toàn bộ thiết kế quy về một quy tắc: **mỗi object chỉ giữ dữ liệu ở đúng một trạng thái.**
+The whole design comes down to one rule: **each object holds data in exactly one state.**
 
 ```text
-ReferenceDataset  →  dữ liệu chưa ghi vào DB, định danh bằng business key
-PersistedIds      →  mapping business key → ID thật do database cấp
-SeedContext       →  lookup đã index sẵn theo ID cho việc sinh giao dịch
-TransactionBatch  →  một lô giao dịch chờ ghi
+ReferenceDataset  →  data not yet written to the DB, identified by business key
+PersistedIds      →  mapping business key → real ID assigned by the database
+SeedContext       →  lookups pre-indexed by ID for generating transactions
+TransactionBatch  →  one batch of transactions waiting to be written
 ```
 
-Khi ranh giới này rõ, mỗi bước test được độc lập.
+With these boundaries clear, each step can be tested on its own.
 
-## Từng thành phần
+## Component by component
 
-| Thành phần | Làm gì | Điểm thiết kế đáng nhớ |
+| Component | What it does | Design point worth remembering |
 |---|---|---|
-| `ReferenceDataGenerator` | Tạo dữ liệu danh mục (store, employee, product, promotion, payment method) **trong bộ nhớ** | Không đụng database. Dữ liệu chỉ có business key (`store_name`, `product_sku`...), chưa có ID |
-| `ReferenceDataset` | Gom các nhóm `*Draft` chưa ghi | `dataclass(frozen=True)`: là đầu vào của repository nên không có lý do bị sửa giữa chừng. Quan hệ giữa các draft đi qua business key vì ID chưa tồn tại |
-| `SeedRepository.insert_reference` | Ghi danh mục vào DB, trả `PersistedIds` | Chỗ duy nhất (cùng `insert_transaction_batch`) nói chuyện với DB. Thứ tự ghi theo khóa ngoại (`store` → `employee`, `category` và `brand` → `product`); `flush()` để lấy ID. Reset (TRUNCATE) và ghi danh mục nằm chung **một transaction** |
-| `PersistedIds` | Cầu nối business key → ID thật | Generator tạo store chỉ biết `store_name`; sau khi ghi DB mới cấp `store_id`, và mọi bảng con phải tham chiếu bằng ID đó. `employee` và `promotion` không có business key trong schema nên map theo **thứ tự** (`list[int]`) |
-| `build_seed_context` | Biến dataset và ids thành cấu trúc tra cứu nhanh | **Hàm thuần**, không I/O, dễ test với dữ liệu giả. Join giữa employee và store xảy ra **một lần ở đây**, nên vòng lặp sinh hàng trăm nghìn giao dịch không phải tra lại |
-| `SeedContext` | `employees_by_store` (kèm ngày vào, ngày nghỉ), `promotions_by_product` (kèm hiệu lực), `product_prices`, trọng số thanh toán | Chỉ chứa ID và index, đúng thứ generator cần; không chứa lại list object ban đầu |
-| `TransactionGenerator` | Logic bán hàng | Chỉ đọc `SeedContext`, không chạm DB. `generate_batches` trả **iterator**: sinh tới đâu ghi tới đó nên bộ nhớ ổn định với ~100k giao dịch. `generate_at` cho `stream.py` dùng lại đúng luật bán hàng |
-| `SeedRepository.insert_transaction_batch` | Ghi một lô | **Một lô là một transaction DB**: commit sau mỗi lô, rollback cả lô nếu lỗi. `TransactionBatch` chứa dict sẵn để bulk insert (~100k đơn, ~280k dòng) |
-| `SeedCoordinator` | Nối các bước, log tiến độ | Mỏng; `main()` chỉ đọc cấu hình rồi gọi `run()` |
+| `ReferenceDataGenerator` | Creates reference data (store, employee, product, promotion, payment method) **in memory** | Does not touch the database. Data has only business keys (`store_name`, `product_sku`...), no IDs yet |
+| `ReferenceDataset` | Groups the unwritten `*Draft` collections | `dataclass(frozen=True)`: it is the repository's input, so there is no reason for it to change midway. Relations between drafts go through business keys because IDs do not exist yet |
+| `SeedRepository.insert_reference` | Writes reference data to the DB, returns `PersistedIds` | The only place (together with `insert_transaction_batch`) that talks to the DB. Write order follows foreign keys (`store` → `employee`, `category` and `brand` → `product`); `flush()` to get IDs. Reset (TRUNCATE) and writing reference data happen in **one transaction** |
+| `PersistedIds` | Bridge from business key to real ID | The generator that creates a store only knows `store_name`; `store_id` is assigned only after writing to the DB, and every child table must reference that ID. `employee` and `promotion` have no business key in the schema, so they are mapped by **order** (`list[int]`) |
+| `build_seed_context` | Turns the dataset and ids into fast lookup structures | A **pure function**, no I/O, easy to test with fake data. The join between employee and store happens **once, here**, so the loop that generates hundreds of thousands of transactions does not look it up again |
+| `SeedContext` | `employees_by_store` (with hire and termination dates), `promotions_by_product` (with validity), `product_prices`, payment weights | Holds only IDs and indexes, exactly what the generator needs; it does not hold the original object lists again |
+| `TransactionGenerator` | Sales logic | Reads only `SeedContext`, never touches the DB. `generate_batches` returns an **iterator**: it writes as it generates, so memory stays flat with ~100k transactions. `generate_at` lets `stream.py` reuse the exact same sales rules |
+| `SeedRepository.insert_transaction_batch` | Writes one batch | **One batch is one DB transaction**: commit after each batch, roll back the whole batch on error. `TransactionBatch` holds ready-made dicts for bulk insert (~100k orders, ~280k lines) |
+| `SeedCoordinator` | Chains the steps, logs progress | Thin; `main()` only reads the config and calls `run()` |
 
-**Giá tại thời điểm bán:** `regular_price` của dòng hàng là snapshot lúc sinh. Về sau `stream.py` đổi giá sản phẩm thì giao dịch cũ
-vẫn giữ giá cũ, đúng như hệ thống POS thật.
+**Price at the time of sale:** a line item's `regular_price` is a snapshot taken at generation time. When `stream.py` later changes a product's price, old transactions
+keep the old price, just like a real POS system.
 
-**Trạng thái giao dịch:** 95% `completed`, 2% `cancelled`, 3% `returned`. `updated_at` của giao dịch hủy cách lúc bán vài chục phút,
-của giao dịch trả hàng cách vài ngày, để dữ liệu có cả những dòng `updated_at` sớm hơn hoặc muộn hơn hóa đơn như hệ thống thật.
+**Transaction status:** 95% `completed`, 2% `cancelled`, 3% `returned`. The `updated_at` of a cancelled transaction is a few dozen minutes after the sale,
+and that of a returned transaction a few days after, so the data has rows whose `updated_at` is earlier or later than the receipt, like a real system.
 
-## Những lỗi thiết kế hay gặp
+## Common design mistakes
 
-| Lỗi | Hậu quả | Cách tránh |
+| Mistake | Consequence | How to avoid it |
 |---|---|---|
-| Dựng `SeedContext` ngay từ generator | Context chứa dữ liệu chưa có ID thật | Luôn đi qua `PersistedIds` |
-| Generator tự commit DB | Khó test, khó rollback | Mọi thao tác DB đi qua `SeedRepository` |
-| Dùng `Faker()` hay `random` rải rác | Không tái lập được dữ liệu | Mọi random đi qua `RandomSource` (bọc `random.Random` và `Faker` có seed) |
-| Trả cả list giao dịch một lần | Tốn bộ nhớ | Trả `Iterator[TransactionBatch]` |
-| Cấu hình có cả `end_date` lẫn `days` | Hai giá trị dễ lệch nhau | Giữ `start` và `days`, suy ra `end_date` |
+| Building `SeedContext` straight from the generator | The context holds data without real IDs | Always go through `PersistedIds` |
+| Generator commits to the DB itself | Hard to test, hard to roll back | All DB operations go through `SeedRepository` |
+| Using `Faker()` or `random` all over the place | Data cannot be reproduced | All randomness goes through `RandomSource` (wraps a seeded `random.Random` and `Faker`) |
+| Returning the whole transaction list at once | Uses a lot of memory | Return `Iterator[TransactionBatch]` |
+| Config has both `end_date` and `days` | The two values drift apart easily | Keep `start` and `days`, derive `end_date` |
 
-# Phần 2: `stream.py`
+# Part 2: `stream.py`
 
-## Vai trò: tạo ra thay đổi, không ghi nhận lịch sử
+## Role: create changes, not record history
 
-`stream.py` **không làm SCD2**. Nó chỉ `UPDATE` ở PostgreSQL nguồn: đổi `unit_cost` là chính, thỉnh thoảng đổi `unit_price`, và chuyển
-vài nhân viên sang cửa hàng khác. Việc lưu lịch sử thuộc về hai thành phần khác:
-- `dlt` mang dữ liệu đã đổi sang Snowflake (incremental theo `updated_at`);
-- dbt dựng các phiên bản cũ và mới (SCD2) từ các dòng append trong RAW.
+`stream.py` **does not do SCD2**. It only runs `UPDATE` on the source PostgreSQL: mainly changing `unit_cost`, sometimes `unit_price`, and moving
+a few employees to another store. Keeping history belongs to two other components:
+- `dlt` carries the changed data to Snowflake (incremental on `updated_at`);
+- dbt builds the old and new versions (SCD2) from the appended rows in RAW.
 
 ```mermaid
 flowchart LR
-    S[stream.py] -->|UPDATE product, employee<br/>INSERT sales khi --sales| PG[(PostgreSQL)]
+    S[stream.py] -->|UPDATE product, employee<br/>INSERT sales with --sales| PG[(PostgreSQL)]
     PG -->|dlt incremental| RAW[(Snowflake RAW)]
     RAW -->|dbt| DIM[dim_product, dim_employee SCD2]
 ```
 
-Vì `updated_at` do trigger của database tự cập nhật, code Python **không cần tự set** cột này; một `UPDATE` thuần là đủ để dlt thấy
-dòng thay đổi.
+Because `updated_at` is maintained by a database trigger, the Python code **does not need to set** this column; a plain `UPDATE` is enough for dlt to see
+that the row changed.
 
-## Một cycle chạy như thế nào
+## How one cycle runs
 
 ```mermaid
 flowchart LR
@@ -110,49 +110,49 @@ flowchart LR
     C -->|StreamApplyResult| D[StreamTickResult + log]
 ```
 
-`StreamRunner.run_once()` làm đúng thứ tự: đọc trạng thái hiện tại, **bán hàng trước** (nếu bật `--sales`), rồi lập kế hoạch đổi giá và
-chuyển nhân viên, rồi ghi. Bán trước đổi giá để giao dịch mới dùng giá hiện tại, giá mới chỉ có hiệu lực từ lúc này.
+`StreamRunner.run_once()` follows a fixed order: read the current state, **sell first** (if `--sales` is on), then plan price changes and
+employee transfers, then write. Selling before changing prices means new transactions use the current price; the new price takes effect only from this point on.
 
-| Thành phần | Làm gì | Điểm thiết kế đáng nhớ |
+| Component | What it does | Design point worth remembering |
 |---|---|---|
-| `StreamConfig` | Tham số: số product mỗi cycle, biên độ đổi giá, xác suất đổi giá bán, số nhân viên chuyển, số giao dịch bán | `price_change_probability` thể hiện "ưu tiên đổi giá vốn, hiếm khi đổi giá bán": mọi product được chọn đều đổi `unit_cost`, chỉ ~10% đổi thêm `unit_price` |
-| `ProductRecord`, `EmployeeRecord` | Ảnh chụp trạng thái hiện tại đọc từ DB | Chỉ là dữ liệu |
-| `ProductChangeEvent`, `EmployeeTransferEvent` | Mô tả **một thay đổi cụ thể**, gồm giá trị cũ và mới | Tách event khỏi bước `UPDATE`: policy chỉ **quyết định**, repository chỉ **thực thi**, và log in thẳng event nên thấy "đổi từ gì sang gì" |
-| `ChangePolicy` | Toàn bộ luật nghiệp vụ, không DB, không I/O | `plan_changes` là hàm thuần, test bằng danh sách product giả là đủ |
-| `SourceRepository` | Lớp duy nhất nói chuyện với PostgreSQL trong `stream.py` | `apply_changes` nằm trong **một transaction**: thành công hết hoặc rollback hết. Không set `updated_at` |
-| `StreamRunner` | Điều phối, không chứa luật | Nhận `clock` từ ngoài (mặc định giờ hiện tại) để test bán hàng với đồng hồ giả |
+| `StreamConfig` | Parameters: products per cycle, price change range, probability of changing the selling price, number of employees to transfer, number of sales transactions | `price_change_probability` expresses "prefer changing cost, rarely change the selling price": every selected product changes `unit_cost`, only ~10% also change `unit_price` |
+| `ProductRecord`, `EmployeeRecord` | Snapshot of the current state read from the DB | Just data |
+| `ProductChangeEvent`, `EmployeeTransferEvent` | Describe **one specific change**, including old and new values | Separating the event from the `UPDATE` step: the policy only **decides**, the repository only **executes**, and the log prints the event directly so you see "changed from what to what" |
+| `ChangePolicy` | All the business rules, no DB, no I/O | `plan_changes` is a pure function; a list of fake products is enough to test it |
+| `SourceRepository` | The only class in `stream.py` that talks to PostgreSQL | `apply_changes` runs in **one transaction**: all succeed or all roll back. Does not set `updated_at` |
+| `StreamRunner` | Orchestrates, holds no rules | Takes a `clock` from outside (defaults to the current time) so sales can be tested with a fake clock |
 
-**Luật của `ChangePolicy`:**
+**`ChangePolicy` rules:**
 
-| Luật | Mục đích |
+| Rule | Purpose |
 |---|---|
-| Chọn tối đa `max_products_per_tick` product, **sắp theo `id` trước khi chọn** | Khối lượng thay đổi nhỏ; cùng dữ liệu và cùng `--seed` cho cùng kết quả |
-| `unit_cost` đổi trong khoảng `cost_change_pct_min..max` (tăng hoặc giảm), làm tròn 100đ | Biến động thực tế, không đột ngột |
-| Biến động quá nhỏ so với bước làm tròn thì vẫn dịch **ít nhất một bước** | `unit_cost` luôn đổi, nếu không cycle không tạo phiên bản mới |
-| `unit_price` chỉ đổi với xác suất `price_change_probability`, làm tròn 1.000đ | Giá bán ít đổi hơn giá vốn |
-| Giá bán giảm không thấp hơn giá vốn hiện tại; giá vốn mới bị chặn bởi giá bán mới; không giá trị nào âm | Không tạo margin âm vô lý |
-| `employees_per_tick` nhân viên đang làm việc chuyển sang cửa hàng **khác** cửa hàng hiện tại | Có thay đổi `store_id` để dựng lịch sử cho `dim_employee` |
+| Pick at most `max_products_per_tick` products, **sorted by `id` before picking** | Small change volume; the same data and the same `--seed` give the same result |
+| `unit_cost` changes within `cost_change_pct_min..max` (up or down), rounded to 100 VND | Realistic, not sudden, movement |
+| If the change is too small relative to the rounding step, still move **at least one step** | `unit_cost` always changes; otherwise the cycle creates no new version |
+| `unit_price` changes only with probability `price_change_probability`, rounded to 1,000 VND | The selling price changes less often than cost |
+| A lowered selling price never goes below the current cost; the new cost is capped by the new selling price; no value is negative | No absurd negative margins |
+| `employees_per_tick` active employees move to a store **other than** their current one | Produces `store_id` changes to build history for `dim_employee` |
 
-**Optimistic check trong `apply_changes`:** câu `UPDATE` có điều kiện trên giá trị cũ (`WHERE unit_cost = :old AND unit_price = :old`). Nếu một
-tiến trình khác vừa sửa dòng đó, cả cycle bị rollback. Rẻ và an toàn khi lỡ chạy hai tiến trình cùng lúc.
+**Optimistic check in `apply_changes`:** the `UPDATE` statement has a condition on the old values (`WHERE unit_cost = :old AND unit_price = :old`). If another
+process has just modified that row, the whole cycle rolls back. Cheap, and safe if two processes are run at the same time by mistake.
 
-**Bán hàng:** `open_intervals(start, end)` và `sample_timestamps(rng, intervals, n)` là **hai hàm thuần** (không DB, không đồng hồ), nên
-test được bằng thời gian giả. Chi tiết cách chọn khoảng giờ mở cửa ở [phase 4](../phases/04-product-change-simulator.md#bán-thêm---sales-n).
+**Sales:** `open_intervals(start, end)` and `sample_timestamps(rng, intervals, n)` are **two pure functions** (no DB, no clock), so
+they can be tested with fake times. How opening-hour intervals are chosen is detailed in [phase 4](../phases/04-product-change-simulator.md#extra-sales---sales-n).
 
-## Lưu ý về SCD2 khi thiết kế tần suất thay đổi
+## A note on SCD2 when designing change frequency
 
-Ingest incremental theo `updated_at` chỉ thấy **trạng thái của dòng tại lúc ingest chạy**. Nếu một product bị đổi giá 3 lần giữa hai lần
-ingest, hai trạng thái trung gian mất. Hệ quả: **mỗi cycle `stream.py` phải được ingest trước khi chạy cycle kế tiếp**. Code không có cooldown;
-kỷ luật này nằm ở cách chạy. Đây cũng là điểm khác với CDC thật, vốn bắt được mọi thay đổi trung gian.
+Incremental ingestion on `updated_at` only sees **the state of a row at the moment ingestion runs**. If a product's price changes 3 times between two
+ingestions, the two intermediate states are lost. Consequence: **each `stream.py` cycle must be ingested before the next cycle runs**. The code has no cooldown;
+this discipline lives in how you run it. It is also where this differs from real CDC, which captures every intermediate change.
 
-Chưa cần các lớp như `PriceCalculator`, `EventPublisher`, `ChangeValidator`. Với phạm vi "đổi giá, chuyển nhân viên, bán thêm", thêm chúng
-chỉ làm code nặng hơn nhu cầu thật.
+Classes such as `PriceCalculator`, `EventPublisher` or `ChangeValidator` are not needed yet. With a scope of "change prices, transfer employees, add sales", adding them
+would only make the code heavier than the real need.
 
-# Phần 3: Bố cục code và kiểm thử
+# Part 3: Code layout and testing
 
 ```text
 src/retail_pulse/generator/
-├── common.py   RandomSource (random.Random + Faker có seed, chance, signed_pct), round_to_step, TZ
+├── common.py   RandomSource (seeded random.Random + Faker, chance, signed_pct), round_to_step, TZ
 ├── seed.py     SeedConfig, *Draft, ReferenceDataset, ReferenceDataGenerator, PersistedIds, SeedContext,
 │               build_seed_context, TransactionBatch, TransactionGenerator, InsertStats, SeedRepository,
 │               SeedCoordinator, main
@@ -161,39 +161,39 @@ src/retail_pulse/generator/
                 SourceRepository, StreamRunner, main
 ```
 
-Cả hai job nhận `session_factory` từ ngoài (`SeedCoordinator.from_config`, `StreamRunner.from_config`). Chạy thật dùng `SessionLocal`; test
-truyền session factory trỏ vào database test.
+Both jobs take a `session_factory` from outside (`SeedCoordinator.from_config`, `StreamRunner.from_config`). Real runs use `SessionLocal`; tests
+pass a session factory that points to the test database.
 
 ## Testing
 
 ```bash
 make test                 # = make up + uv run pytest
-uv run pytest -k seed     # chỉ test seed
+uv run pytest -k seed     # seed tests only
 ```
 
-**Database test.** `tests/conftest.py` tạo database riêng `<PG_DB>_test` (đổi bằng `PG_TEST_DB`) trên Postgres đang chạy, nạp
-`infras/postgres/init/01_schema.sql`, TRUNCATE mọi bảng sau mỗi test và xóa database khi kết thúc.
-- *Vì sao không dùng SQLite:* schema dựa vào tính năng riêng của PostgreSQL (schema `retail`, IDENTITY, trigger `updated_at`,
-  `INSERT ... RETURNING` giữ thứ tự).
-- *Vì sao không "rollback sau mỗi test":* generator tự commit theo từng transaction, và đó chính là hành vi cần test.
-- Postgres chưa bật thì các test cần DB bị skip, unit test vẫn chạy.
+**Test database.** `tests/conftest.py` creates a separate database `<PG_DB>_test` (change it with `PG_TEST_DB`) on the running Postgres, loads
+`infras/postgres/init/01_schema.sql`, TRUNCATEs every table after each test and drops the database at the end.
+- *Why not SQLite:* the schema relies on PostgreSQL-specific features (the `retail` schema, IDENTITY, the `updated_at` trigger,
+  order-preserving `INSERT ... RETURNING`).
+- *Why not "roll back after each test":* the generator commits per transaction itself, and that is exactly the behavior under test.
+- If Postgres is not running, tests that need the DB are skipped; unit tests still run.
 
-| File | Không cần DB | Cần DB |
+| File | No DB needed | DB needed |
 |---|---|---|
-| `tests/test_seed.py` | dataset tái lập được; hình dạng dataset; `build_seed_context` map key sang ID; chia batch và tái lập; hỗ trợ ít hơn 8 sản phẩm; validate tham số | số dòng danh mục; số giao dịch gần mục tiêu; `product_name` khớp brand; dữ liệu giao dịch nhất quán (nhân viên đúng cửa hàng và đang làm việc, promotion còn hiệu lực, không FK mồ côi); ngày bán nằm trong cửa sổ cấu hình; từ chối DB có dữ liệu, `--reset` cho lại dữ liệu cũ |
-| `tests/test_stream.py` | tái lập theo seed; số product chọn bị chặn bởi số có sẵn; chuyển nhân viên sang cửa hàng khác và bị bỏ qua khi chỉ có một cửa hàng; biên độ và làm tròn; xác suất đổi giá bán; không margin âm; luôn dịch ít nhất một bước; `open_intervals` chỉ giữ giờ mở cửa; `sample_timestamps` nằm trong khoảng, đã sắp xếp, tái lập; validate tham số | một cycle chỉ đổi đúng các product được chọn; rollback cả cycle khi lỗi; chạy N cycle với `time.sleep` bị mock; DB trống báo lỗi rõ; nhân viên chuyển sang cửa hàng khác; không bật `--sales` thì không INSERT; bật thì giao dịch mới nằm trong giờ mở cửa; bỏ qua bán hàng khi chưa có giờ mở cửa nào trôi qua |
+| `tests/test_seed.py` | reproducible dataset; dataset shape; `build_seed_context` maps keys to IDs; batching and reproducibility; supports fewer than 8 products; parameter validation | reference row counts; transaction count close to target; `product_name` matches brand; consistent transaction data (employee at the right store and employed, promotion still valid, no orphan FKs); sale dates within the configured window; refuses a DB that has data, `--reset` reproduces the previous data |
+| `tests/test_stream.py` | reproducible by seed; number of selected products capped by those available; employees moved to another store, and skipped when there is only one store; range and rounding; probability of changing the selling price; no negative margin; always moves at least one step; `open_intervals` keeps only opening hours; `sample_timestamps` within range, sorted, reproducible; parameter validation | one cycle changes exactly the selected products; whole cycle rolls back on error; runs N cycles with `time.sleep` mocked; empty DB gives a clear error; employees moved to another store; no INSERT without `--sales`; with it, new transactions fall within opening hours; sales skipped when no opening hours have passed yet |
 
-Không có test cho khách hàng hay trạng thái `pending`: domain khách hàng bị loại khỏi phạm vi, và trạng thái hợp lệ chỉ là `completed`,
+There are no tests for customers or the `pending` status: the customer domain is out of scope, and the only valid statuses are `completed`,
 `cancelled`, `returned`.
 
-# Kết
+# Summary
 
-Cả hai job theo cùng một nguyên tắc: **mỗi object chỉ giữ dữ liệu ở đúng một trạng thái, mỗi class có đúng một trách nhiệm.**
+Both jobs follow the same principle: **each object holds data in exactly one state, and each class has exactly one responsibility.**
 
 ```text
-seed.py    →  INSERT khối lượng lớn:  ReferenceDataset → PersistedIds → SeedContext → TransactionBatch
-stream.py  →  UPDATE khối lượng nhỏ:  ProductRecord → ProductChangeEvent → StreamApplyResult (cộng INSERT giao dịch khi --sales)
+seed.py    →  large-volume INSERT:  ReferenceDataset → PersistedIds → SeedContext → TransactionBatch
+stream.py  →  small-volume UPDATE:  ProductRecord → ProductChangeEvent → StreamApplyResult (plus INSERT of transactions with --sales)
 ```
 
-Phần **quyết định** (generator, policy) tách khỏi phần **ghi database** (repository), và một lớp điều phối mỏng (`SeedCoordinator`,
-`StreamRunner`) nối các bước lại. Nhờ vậy mỗi phần test được riêng, và hai job dùng chung `RandomSource` cùng cách kết nối database.
+The **decision** part (generator, policy) is separate from the **database write** part (repository), and a thin orchestration layer (`SeedCoordinator`,
+`StreamRunner`) connects the steps. As a result, each part can be tested on its own, and both jobs share `RandomSource` and the same way of connecting to the database.

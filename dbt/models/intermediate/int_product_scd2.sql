@@ -4,10 +4,10 @@
 WITH versions AS (
     SELECT
         product_id,
-        -- Type 1: luôn lấy giá trị mới nhất của sản phẩm
+        -- Type 1: always the product's latest value
         FIRST_VALUE(product_sku)   {{ w_latest }} AS product_sku,
         FIRST_VALUE(product_name)  {{ w_latest }} AS product_name,
-        -- Type 2: bốn cột theo dõi
+        -- Type 2: four tracked columns
         category_id,
         brand_id,
         unit_price,

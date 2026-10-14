@@ -2,7 +2,7 @@ version: 2
 
 sources:
   - name: raw
-    description: Dữ liệu OLTP do dlt nạp vào Snowflake. Append-only với các bảng incremental, nên có thể chứa nhiều phiên bản và dòng trùng ở biên cursor.
+    description: OLTP data loaded into Snowflake by dlt. Incremental tables are append-only, so they can hold several versions and duplicate rows at the cursor boundary.
     database: RETAIL_PULSE
     schema: RAW
     tables:
@@ -45,8 +45,8 @@ sources:
               - unique
               - not_null
 
-      # Append incremental: nhiều phiên bản cùng id, SCD2 dựng ở intermediate
-      # (không test unique vì id lặp lại qua các phiên bản)
+      # Append incremental: several versions per id; SCD2 is built in intermediate
+      # (no unique test because id repeats across versions)
       - name: product
         columns:
           - name: id
@@ -58,7 +58,7 @@ sources:
             data_tests:
               - not_null
 
-      # Append incremental: nguồn của fct_sales
+      # Append incremental: source of fct_sales
       - name: sales_transaction
         config:
           loaded_at_field: created_at

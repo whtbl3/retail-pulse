@@ -1,36 +1,36 @@
-# Phase 4 — Mô phỏng thay đổi nguồn (`stream.py`)
+# Phase 4: Source change simulator (`stream.py`)
 
-Dữ liệu thật không đứng yên: giá đổi, nhân viên chuyển cửa hàng, hóa đơn mới đổ về liên tục. Nếu nguồn chỉ có
-một bộ dữ liệu tĩnh thì không kiểm tra được hai thứ quan trọng nhất của dự án: **SCD2** (lịch sử đổi giá, đổi cửa hàng) và
-**incremental** (chỉ nạp phần mới). `stream.py` tạo ra những thay đổi nhỏ, thực tế đó.
-Thiết kế chi tiết: [design/data-generator.md](../design/data-generator.md) (Phần 2).
+Real data does not stand still: prices change, employees move between stores, new receipts keep arriving. If the source
+only had a static dataset, you could not test the two most important parts of the project: **SCD2** (history of price
+changes and store transfers) and **incremental** (loading only new data). `stream.py` creates those small, realistic changes.
+Detailed design: [design/data-generator.md](../design/data-generator.md) (Part 2).
 
-Mặc định `stream.py` **chỉ UPDATE**: `unit_cost` và `unit_price` của product có sẵn, `store_id` của employee đang làm
-việc (`end_date` rỗng). Không INSERT, không DELETE, không tự set `updated_at` (trigger trong DB làm việc đó).
-Thêm `--sales N` thì mỗi cycle còn **INSERT N giao dịch bán mới** (mục "Bán thêm").
+By default `stream.py` **only runs UPDATEs**: `unit_cost` and `unit_price` of existing products, and `store_id` of
+current employees (empty `end_date`). No INSERT, no DELETE, and it never sets `updated_at` itself (the DB trigger does that).
+With `--sales N`, each cycle also **INSERTs N new sales transactions** (see "Extra sales").
 
-## Chạy
+## Run
 
 ```bash
-make stream                       # 1 cycle rồi thoát
-make stream-loop                  # chạy liên tục, Ctrl+C để dừng
-uv run stream --seed 42           # tái lập được lựa chọn và giá trị
-uv run stream --help              # xem mọi tham số và mặc định
+make stream                       # 1 cycle, then exit
+make stream-loop                  # run continuously, Ctrl+C to stop
+uv run stream --seed 42           # reproducible choices and values
+uv run stream --help              # show every option and default
 ```
 
-| Tham số | Mặc định | Ý nghĩa |
+| Option | Default | Meaning |
 |---|---|---|
-| `--products` | 5 | Số product đổi mỗi cycle |
-| `--cost-pct-min` / `--cost-pct-max` | 0.01 / 0.05 | Biên độ đổi giá vốn (tăng hoặc giảm) |
-| `--price-probability` | 0.10 | Xác suất một product được chọn đổi thêm giá bán |
-| `--price-pct-min` / `--price-pct-max` | 0.01 / 0.08 | Biên độ đổi giá bán |
-| `--sales` | 0 (tắt) | Số giao dịch bán mới INSERT mỗi cycle |
-| `--transfers` | 1 | Số employee chuyển cửa hàng mỗi cycle (luôn sang cửa hàng khác), 0 = tắt |
-| `--loop` / `--interval` | tắt / 30 giây | Chạy liên tục |
-| `--seed` | không | Random seed |
+| `--products` | 5 | Number of products changed per cycle |
+| `--cost-pct-min` / `--cost-pct-max` | 0.01 / 0.05 | Range of the unit cost change (up or down) |
+| `--price-probability` | 0.10 | Probability that a chosen product also gets a selling price change |
+| `--price-pct-min` / `--price-pct-max` | 0.01 / 0.08 | Range of the selling price change |
+| `--sales` | 0 (off) | Number of new sales transactions INSERTed per cycle |
+| `--transfers` | 1 | Number of employees moved per cycle (always to a different store), 0 = off |
+| `--loop` / `--interval` | off / 30 seconds | Run continuously |
+| `--seed` | none | Random seed |
 
-Mỗi cycle là một transaction DB: thành công hết hoặc rollback hết. Lỗi kết nối hoặc ràng buộc trả mã thoát khác 0;
-bảng `product` trống thì báo "chạy `make seed` trước".
+Each cycle is one DB transaction: everything succeeds or everything rolls back. Connection or constraint errors return
+a non-zero exit code. If the `product` table is empty, it reports "run `make seed` first".
 
 ```text
 [cycle 1] product 13 SKU-00013: cost 108300 -> 110400, price 162000 -> 162000 (supplier_cost_adjustment)
@@ -38,54 +38,54 @@ bảng `product` trống thì báo "chạy `make seed` trước".
 [cycle 1] scanned 500, planned 5, updated 5 products
 ```
 
-## Bán thêm (`--sales N`)
+## Extra sales (`--sales N`)
 
 ```bash
-make stream-sales             # 1 cycle: đổi giá, chuyển nhân viên, bán thêm SALES=300 giao dịch
+make stream-sales             # 1 cycle: change prices, move employees, add SALES=300 transactions
 make stream-sales SALES=50
 uv run stream --sales 100 --products 3
 ```
 
-*Vì sao cần:* `stream` thuần chỉ đổi dữ liệu có sẵn nên không thêm dòng nào vào fact. Muốn thử cả chuỗi dlt, dbt và
-phần incremental của `fct_sales` thì phải có **giao dịch mới thật** ở nguồn.
+*Why it is needed:* plain `stream` only changes existing data, so it adds no rows to the fact. To test the whole dlt and
+dbt chain and the incremental part of `fct_sales`, the source needs **real new transactions**.
 
-Cách sinh dùng lại đúng luật bán hàng của `seed.py` (khuyến mãi theo đơn vị, coupon theo dòng, 95% completed, 2%
+Generation reuses the exact sales rules of `seed.py` (per-unit promotions, per-line coupons, 95% completed, 2%
 cancelled, 3% returned):
-1. **Khoảng thời gian:** từ mốc muộn nhất của `sales_transaction` (lớn hơn của `transaction_ts` và `updated_at`) đến
-   bây giờ. Mốc bắt đầu phải **sau** mốc nạp của dlt; nếu không, giao dịch mới sẽ không bao giờ được nạp.
-2. **Giờ mở cửa:** chỉ lấy phần nằm trong 7h–22h (giờ `Asia/Ho_Chi_Minh`), thời gian đóng cửa bị bỏ qua.
-3. **Cửa hàng và nhân viên:** cửa hàng ngẫu nhiên có nhân viên đang làm; nhân viên thuộc cửa hàng **hiện tại**
-   (kể cả sau khi `stream` vừa chuyển cửa hàng).
-4. **Giá:** `regular_price` là giá bán hiện tại. Bán xảy ra **trước** khi đổi giá trong cùng cycle, nên đổi giá chỉ có
-   hiệu lực cho giao dịch sau.
-5. Ghi cả lô trong một transaction DB.
+1. **Time window:** from the latest timestamp in `sales_transaction` (the larger of `transaction_ts` and `updated_at`)
+   to now. The start must be **after** the dlt load watermark. Otherwise the new transactions will never be loaded.
+2. **Opening hours:** only the part within 7:00–22:00 (`Asia/Ho_Chi_Minh` time) is used. Closed hours are skipped.
+3. **Store and employee:** a random store with current employees; the employee belongs to the **current** store
+   (including right after `stream` moved them).
+4. **Price:** `regular_price` is the current selling price. Sales happen **before** price changes in the same cycle, so
+   a price change only applies to later transactions.
+5. The whole batch is written in one DB transaction.
 
-Nếu chưa có giờ mở cửa nào trôi qua kể từ giao dịch gần nhất (ví dụ chạy lần hai ngay trong đêm), lệnh ghi log
-"chưa có giờ mở cửa nào..." và không bán gì. Số giao dịch mỗi cycle cố định theo `--sales`, các thời điểm không dồn
-về chiều tối như `seed.py`.
+If no opening hours have passed since the latest transaction (for example, a second run during the night), the command
+logs "no opening hours since the latest transaction..." and sells nothing. The number of transactions per cycle is fixed by `--sales`,
+and the timestamps are not concentrated in the evening as in `seed.py`.
 
-## Hạn chế: phải ingest sau mỗi cycle
+## Limit: ingest after every cycle
 
 ```text
-make stream  ->  product.updated_at mới  ->  make ingest (append)  ->  dbt SCD2 (phase 5)
+make stream  ->  new product.updated_at  ->  make ingest (append)  ->  dbt SCD2 (phase 5)
 ```
 
-Con trỏ `updated_at` chỉ thấy **trạng thái cuối** của một dòng tại lúc ingest. Vì vậy mỗi cycle phải được ingest
-trước khi chạy cycle kế tiếp. *Nếu bỏ qua:* hai lần đổi giá liên tiếp chỉ để lại một phiên bản trong RAW, phiên bản
-trung gian mất vĩnh viễn và SCD2 thiếu một đoạn lịch sử. Nguồn cũng không có DELETE vì con trỏ không thấy dòng đã xóa.
+The `updated_at` cursor only sees the **final state** of a row at ingest time. So each cycle must be ingested before
+the next cycle runs. *If skipped:* two price changes in a row leave only one version in RAW. The intermediate version is
+lost forever and SCD2 misses a piece of history. The source also has no DELETE, because the cursor cannot see deleted rows.
 
-## Kiểm tra
+## Check
 
 ```sql
 SELECT id, product_sku, unit_cost, unit_price, updated_at
 FROM retail.product ORDER BY updated_at DESC LIMIT 10;
 ```
 
-Test tự động: `tests/test_stream.py` (xem [Testing](../design/data-generator.md#testing)).
+Automated tests: `tests/test_stream.py` (see [Testing](../design/data-generator.md#testing)).
 
-## Đọc thêm
+## Further reading
 
 - [Kimball: SCD Type 2](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/type-2/):
-  vì sao lưu mỗi lần thay đổi thành một dòng mới.
+  why each change is stored as a new row.
 
-Tiếp theo: [Phase 5 — dbt](05-dbt.md).
+Next: [Phase 5: dbt](05-dbt.md).

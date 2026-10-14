@@ -1,365 +1,383 @@
-# Phase 5 — dbt (Snowflake RAW → staging → intermediate → marts)
+# Phase 5: dbt (Snowflake RAW → staging → intermediate → marts)
 
-Mục tiêu: biến dữ liệu RAW do dlt nạp thành star schema phân tích doanh số. dbt đi qua bốn tầng, mỗi tầng một việc,
-giống một nhà hàng: **staging** là sơ chế nguyên liệu, **intermediate** là nấu phần nền (SCD2), **marts** là bày đĩa
-cho dashboard. Mỗi bước dưới đây tự kiểm tra được bằng `dbt build -s <tầng>`.
+Goal: turn the RAW data loaded by dlt into a star schema for sales analysis. dbt goes through four layers, one job each,
+like a restaurant: **staging** is prepping the ingredients, **intermediate** is cooking the base (SCD2), **marts** is
+plating for the dashboard. Each step below can be checked on its own with `dbt build -s <layer>`.
 
-Tổng cộng 20 model (10 staging, 2 intermediate, 7 dimension, 1 fact) và 148 test; `dbt build` toàn dự án báo `PASS=168`
-(168 là số model cộng số test).
+In total there are 20 models (10 staging, 2 intermediate, 7 dimensions, 1 fact) and 148 tests; a full-project
+`dbt build` reports `PASS=168` (168 is models plus tests).
 
-## Bước 1 — Kết nối và `dbt debug`
+## Step 1: Connection and `dbt debug`
 
-Dự án dbt nằm ở `dbt/`, dùng dbt-core 1.12 và adapter Snowflake trong `.venv` (cài bằng `uv`). Máy có thể còn một bản
-dbt khác ở `~/.local/bin` (ví dụ bản 2.0.6); tài liệu này luôn chạy bản trong `.venv` qua `uv run`.
-dbt đăng nhập bằng key pair với user `DBT_TRANSFORMER`, role `TRANSFORMER` (tạo ở [phase 3](03-ingestion-snowflake.md)).
+The dbt project lives in `dbt/` and uses dbt-core 1.12 and the Snowflake adapter in `.venv` (installed with `uv`). Your
+machine may have another dbt in `~/.local/bin` (for example version 2.0.6); this guide always runs the `.venv` one through
+`uv run`. dbt logs in with a key pair as user `DBT_TRANSFORMER`, role `TRANSFORMER` (created in
+[phase 3](03-ingestion-snowflake.md)).
 
-| File | Vai trò | Commit? |
+| File | Role | Commit? |
 |---|---|---|
-| `~/.dbt/profiles.yml` | **Cách kết nối**: account, user, key, role, warehouse. Nằm ngoài repo, mỗi người một file; mẫu ở `dbt/profiles.yml.example` | Không |
-| `dbt/dbt_project.yml` | **Nội dung dự án**: đường dẫn thư mục, `vars`, materialization và schema theo tầng | Có |
-| `dbt/macros/generate_schema_name.sql` | Ghi đè cách đặt tên schema (xem dưới) | Có |
-| `dbt/macros/surrogate_key.sql` | Sinh khóa thay thế cho dimension (bước 5) | Có |
-| `.env` | Giá trị cho `env_var()` (`SNOWFLAKE_ACCOUNT`, `DBT_PRIVATE_KEY_PATH`) | Không |
-| `.snowflake/*.p8` | Private key | Không |
+| `~/.dbt/profiles.yml` | **How to connect**: account, user, key, role, warehouse. Outside the repo, one per person; template in `dbt/profiles.yml.example` | No |
+| `dbt/dbt_project.yml` | **Project content**: folder paths, `vars`, materialization and schema per layer | Yes |
+| `dbt/macros/generate_schema_name.sql` | Overrides schema naming (see below) | Yes |
+| `dbt/macros/surrogate_key.sql` | Builds surrogate keys for dimensions (step 5) | Yes |
+| `.env` | Values for `env_var()` (`SNOWFLAKE_ACCOUNT`, `DBT_PRIVATE_KEY_PATH`) | No |
+| `.snowflake/*.p8` | Private key | No |
 
-Chép nội dung `dbt/profiles.yml.example` vào `~/.dbt/profiles.yml`. Nếu file đã có profile khác thì **thêm vào cuối**, đừng
-ghi đè cả file. Rồi kiểm tra:
+Copy the content of `dbt/profiles.yml.example` into `~/.dbt/profiles.yml`. If the file already has other profiles,
+**append to the end**. Do not overwrite the whole file. Then check:
 
 ```bash
 set -a && . ./.env && set +a && cd dbt && uv run dbt debug
 ```
 
-*Vì sao phải nạp `.env` thủ công:* dbt không tự đọc `.env`, trong khi profile dùng `env_var()` để không chứa bí mật.
-*Nếu bỏ qua:* `env_var ... not found`. (Tiện ích dbt trong IDE cũng báo lỗi này vì nó không đọc `.env`; đó không phải
-lỗi của file, chạy trong terminal vẫn bình thường.)
+*Why load `.env` by hand:* dbt does not read `.env` itself, and the profile uses `env_var()` so it holds no secrets.
+*If you skip it:* `env_var ... not found`. (The dbt extension in the IDE also shows this error because it does not read
+`.env`. The file is fine; it works in the terminal.)
 
-| Phần trong output | Ý nghĩa |
+| Output section | Meaning |
 |---|---|
-| `Debugging profile` | Tìm thấy profile `retail_pulse`; thiếu biến môi trường thì lỗi hiện ở đây |
-| `Debugging connection` | Tham số dbt sẽ dùng: account, user, database, warehouse, schema, role |
-| `Connection test: OK` | Đã đăng nhập Snowflake thật bằng key |
-| `All checks passed!` | Đạt toàn bộ |
+| `Debugging profile` | Found the `retail_pulse` profile; missing environment variables show up here |
+| `Debugging connection` | Parameters dbt will use: account, user, database, warehouse, schema, role |
+| `Connection test: OK` | Logged in to real Snowflake with the key |
+| `All checks passed!` | Everything passed |
 
-### Hai quyết định cấu hình
+### Two configuration decisions
 
-**`threads: 4`:** số model chạy song song. Bị giới hạn bởi DAG (model phụ thuộc phải chờ nhau) và bởi warehouse
-`RETAIL_WH` XSMALL có hàng chờ query. Tăng thread chỉ có ích khi DAG có nhiều nhánh độc lập; muốn nhanh hơn thì cân
-nhắc size warehouse trước.
+**`threads: 4`:** the number of models run in parallel. It is limited by the DAG (dependent models must wait for each
+other) and by the XSMALL `RETAIL_WH` warehouse, which queues queries. More threads only help when the DAG has many
+independent branches. To go faster, consider the warehouse size first.
 
-**Mỗi tầng một schema, `generate_schema_name` ghi đè.** Mặc định dbt nối `target.schema` với schema khai báo
-(`DBT_DEV_STAGING`). Macro của dự án bỏ phép nối, nên schema đúng là `STAGING`, `INTERMEDIATE`, `MARTS`
-(riêng target `ci` của [phase 9](09-dataops-ci.md) thêm tiền tố `PR_<số>_`).
+**One schema per layer, overridden by `generate_schema_name`.** By default dbt joins `target.schema` with the declared
+schema (`DBT_DEV_STAGING`). The project macro drops that join, so the schemas are exactly `STAGING`, `INTERMEDIATE`, `MARTS`
+(only the `ci` target of [phase 9](09-dataops-ci.md) adds a `PR_<number>_` prefix).
 
-| Tầng | `+materialized` | Lý do |
+| Layer | `+materialized` | Reason |
 |---|---|---|
-| staging | view | Chỉ đổi tên, ép kiểu, dedup; nhẹ, không cần lưu |
-| intermediate | table | `int_product_scd2` dùng window function trên toàn bộ lịch sử và `fct_sales` join vào nó; tính một lần lúc build, không tính lại mỗi lần query |
-| marts | table (`fct_sales` là incremental) | Bảng cho dashboard |
+| staging | view | Only renames, casts, dedups; light, no need to store |
+| intermediate | table | `int_product_scd2` runs window functions over the full history and `fct_sales` joins to it; computed once at build time, not on every query |
+| marts | table (`fct_sales` is incremental) | Tables for the dashboard |
 
-> **Hạn chế:** vì macro bỏ phần nối `target.schema`, nếu thêm target `prod` dùng chung database `RETAIL_PULSE`, dev
-> và prod sẽ ghi vào cùng `STAGING`, `INTERMEDIATE`, `MARTS`. Hiện chỉ có dev nên chưa ảnh hưởng; khi thêm prod thì
-> cho macro rẽ nhánh theo `target.name` hoặc dùng database riêng.
+> **Limitation:** because the macro drops the `target.schema` join, if a `prod` target is added on the same
+> `RETAIL_PULSE` database, dev and prod will write to the same `STAGING`, `INTERMEDIATE`, `MARTS`. There is only dev now,
+> so nothing is affected yet. When adding prod, make the macro branch on `target.name` or use a separate database.
 
-> **Cẩn thận chính tả config:** dbt không báo lỗi khi key có tiền tố `+` bị sai (ví dụ `+materialize` thay vì
-> `+materialized`); model lặng lẽ rơi về mặc định (view). Kiểm tra bằng loại đối tượng thực tế được tạo.
+> **Watch config spelling:** dbt does not raise an error when a `+` key is misspelled (for example `+materialize`
+> instead of `+materialized`); the model silently falls back to the default (view). Check the object type actually created.
 
-Đọc thêm: [Materializations](https://docs.getdbt.com/docs/build/materializations),
+Further reading: [Materializations](https://docs.getdbt.com/docs/build/materializations),
 [How we structure our dbt projects](https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview).
 
-## Bước 2 — Khai báo sources
+## Step 2: Declare sources
 
-File: `dbt/models/staging/___sources.yml`. **Source** là bảng dbt không tự tạo (ở đây là bảng RAW do dlt nạp). Khai
-báo một lần rồi gọi bằng `{{ source('raw', '<bảng>') }}` thay vì gõ cứng tên bảng; nhờ vậy dbt vẽ được DAG từ nguồn
-và gắn được test, freshness vào nguồn.
+File: `dbt/models/staging/___sources.yml`. A **source** is a table dbt does not create itself (here, the RAW tables
+loaded by dlt). Declare it once, then reference it with `{{ source('raw', '<table>') }}` instead of hard-coding the table
+name. This lets dbt draw the DAG from the sources and attach tests and freshness to them.
 
-- Khai báo 10 bảng nghiệp vụ; bỏ các bảng nội bộ của dlt (`_dlt_loads`, `_dlt_version`, `_dlt_pipeline_state`).
-- Khóa chính lấy từ `PRIMARY KEY` trong `infras/postgres/init/`. Hai bảng có khóa ghép: `promotion_product
-  (product_id, promotion_id)` và `sales_transaction_item (transaction_id, line_number)`.
-- **Test ở source chỉ khẳng định điều luôn đúng ở nguồn.** Bảng replace: `unique` + `not_null` trên `id`. Bảng append
-  (`product`, `employee`): chỉ `not_null`, vì `id` lặp lại qua các phiên bản. Khóa ghép: `not_null` từng cột, còn
-  `unique` của tổ hợp kiểm ở staging.
-- **Freshness** chỉ đặt cho `sales_transaction` (`loaded_at_field: created_at`, cảnh báo sau 1 ngày, lỗi sau 3 ngày).
-  Không đặt cho `product` và `employee` vì chúng chỉ có dòng mới khi dữ liệu đổi, sẽ báo lỗi oan. Chạy bằng
-  `dbt source freshness`, không chạy trong `dbt build`; dữ liệu seed cũ nên lệnh này có thể báo lỗi, đó không phải
-  lỗi của dbt.
+- Declare the 10 business tables; skip the dlt internal tables (`_dlt_loads`, `_dlt_version`, `_dlt_pipeline_state`).
+- Primary keys come from `PRIMARY KEY` in `infras/postgres/init/`. Two tables have composite keys: `promotion_product
+  (product_id, promotion_id)` and `sales_transaction_item (transaction_id, line_number)`.
+- **Source tests only assert what is always true at the source.** Replace tables: `unique` + `not_null` on `id`. Append
+  tables (`product`, `employee`): only `not_null`, because `id` repeats across versions. Composite keys: `not_null` on
+  each column; `unique` on the combination is checked in staging.
+- **Freshness** is set only on `sales_transaction` (`loaded_at_field: created_at`, warn after 1 day, error after 3 days).
+  It is not set on `product` and `employee` because they only get new rows when data changes, so it would raise false
+  errors. Run it with `dbt source freshness`; it does not run in `dbt build`. Seed data is old, so this command may
+  report an error. That is not a dbt bug.
 
-Cú pháp bản dbt hiện tại: dùng `data_tests:` thay `tests:`, và `freshness`, `loaded_at_field` nằm trong `config:`.
-Cú pháp cũ vẫn chạy nhưng bị cảnh báo deprecation. Lỗi hay gặp: khai báo trùng một bảng (copy khối rồi sửa) gây
-`two sources with the name`; chạy `dbt parse` ngay sau khi sửa file yml để bắt sớm.
+Syntax for the current dbt version: use `data_tests:` instead of `tests:`, and put `freshness` and `loaded_at_field`
+inside `config:`. The old syntax still runs but raises deprecation warnings. A common mistake: declaring a table twice
+(copying a block and editing it) causes `two sources with the name`. Run `dbt parse` right after editing a yml file to
+catch it early.
 
-Đọc thêm: [Add sources to your DAG](https://docs.getdbt.com/docs/build/sources).
+Further reading: [Add sources to your DAG](https://docs.getdbt.com/docs/build/sources).
 
-## Bước 3 — Staging
+## Step 3: Staging
 
-Mỗi bảng RAW một model `stg_<tên>`, chỉ chứa `select`, đọc từ `source()`, materialize thành view trong schema `STAGING`.
+One `stg_<name>` model per RAW table. It contains only a `select`, reads from `source()`, and is materialized as a view
+in the `STAGING` schema.
 
-| Làm | Không làm |
+| Do | Do not |
 |---|---|
-| Đổi tên cột cho rõ nghĩa (`id` thành `store_id`) | Join, tính toán nghiệp vụ |
-| Bỏ cột kỹ thuật `_dlt_*` | Gộp các phiên bản SCD2 (giữ nguyên lịch sử) |
-| Dedup bản sao ở biên cursor của dlt (bảng append) | |
-| Lọc giao dịch `status = 'completed'` và bỏ cột `status` (chỉ ở hai bảng bán hàng) | |
+| Rename columns to clear names (`id` to `store_id`) | Joins, business calculations |
+| Drop the `_dlt_*` technical columns | Merge SCD2 versions (keep the full history) |
+| Dedup copies at the dlt cursor boundary (append tables) | |
+| Filter transactions to `status = 'completed'` and drop the `status` column (only in the two sales tables) | |
 
-| Model | Kiểu nạp ở RAW | Dedup | Khóa kiểm tra |
+| Model | RAW load type | Dedup | Key checked |
 |---|---|---|---|
-| `stg_store`, `stg_category`, `stg_brand`, `stg_promotion`, `stg_payment_method` | replace | không | khóa chính: `unique` + `not_null` |
-| `stg_promotion_product` | replace | không | `unique_combination_of_columns (promotion_id, product_id)` |
-| `stg_product` | append | có | `(product_id, updated_at)` |
-| `stg_employee` | append | có | `(employee_id, updated_at)` |
-| `stg_sales_transaction` | append | có | `transaction_id` |
-| `stg_sales_transaction_item` | append | có | `(transaction_id, line_number)` |
+| `stg_store`, `stg_category`, `stg_brand`, `stg_promotion`, `stg_payment_method` | replace | no | primary key: `unique` + `not_null` |
+| `stg_promotion_product` | replace | no | `unique_combination_of_columns (promotion_id, product_id)` |
+| `stg_product` | append | yes | `(product_id, updated_at)` |
+| `stg_employee` | append | yes | `(employee_id, updated_at)` |
+| `stg_sales_transaction` | append | yes | `transaction_id` |
+| `stg_sales_transaction_item` | append | yes | `(transaction_id, line_number)` |
 
-### Dedup bằng `QUALIFY`
+### Dedup with `QUALIFY`
 
 ```sql
 select ... from {{ source('raw', 'product') }}
 qualify row_number() over (
-    partition by <mọi cột nghiệp vụ, gồm updated_at>
+    partition by <all business columns, including updated_at>
     order by _dlt_load_id desc
 ) = 1
 ```
 
-- **Bản sao** là hai dòng giống hệt về mọi cột nghiệp vụ, chỉ khác `_dlt_*`. **Phiên bản** là cùng id nhưng
-  `updated_at` khác. Dedup phải loại bản sao và **giữ mọi phiên bản**.
-- `updated_at` phải nằm trong `partition by`. *Nếu thiếu:* nhân viên chuyển cửa hàng A, B, A bị gộp hai phiên bản A
-  làm một và mất lịch sử; test `unique` vẫn pass nên lỗi chỉ lộ ra khi tự nghĩ tình huống và kiểm tra.
-- Gom theo mọi cột (không chỉ `id` và `updated_at`) để hai dòng cùng khóa nhưng khác giá trị không bị chọn bừa mà làm
-  test `unique` fail: lỗi được phát hiện thay vì bị che. Thêm cột mới ở nguồn thì phải thêm vào `partition by`.
+- A **copy** is two rows identical in every business column, differing only in `_dlt_*`. A **version** has the same id
+  but a different `updated_at`. Dedup must remove copies and **keep every version**.
+- `updated_at` must be in `partition by`. *If it is missing:* an employee who moves from store A to B and back to A has the
+  two A versions merged into one, and history is lost. The `unique` test still passes, so the bug only shows when you
+  think through the scenario and check it.
+- Group by all columns (not just `id` and `updated_at`) so that two rows with the same key but different values are not
+  picked at random. Instead they make the `unique` test fail: the bug is caught, not hidden. When a new column is added at
+  the source, add it to `partition by`.
 
-### Test trong `___models.yml`
+### Tests in `___models.yml`
 
-- **Khóa chính:** `unique` + `not_null`. **Bảng append:** `unique_combination_of_columns` trên `(id, updated_at)` vì `id`
-  một mình lặp lại. Hàm này thuộc package `dbt_utils` (khai báo ở `dbt/packages.yml`, cài bằng `make dbt-deps`).
-- **`accepted_values`:** lấy danh sách từ `CHECK` của Postgres, không từ trí nhớ: `promotion.type` là `percentage`,
-  `fixed_amount` (không phải `fixed`); `status` ở nguồn là `completed`, `cancelled`, `returned` (đã lọc ở staging nên
-  không còn test).
-- **`relationships`:** đặt ở bảng **con**, trên cột khóa ngoại, trỏ tới bảng cha. Giá trị rỗng bị bỏ qua nên khóa ngoại
-  bắt buộc cần thêm `not_null`. Không đặt từ `product_id` sang `stg_product` (nhiều dòng mỗi `product_id`); kiểm fact
-  trỏ tới dimension làm ở marts.
-- Mỗi model và cột quan trọng có `description`, hiện ra trong `dbt docs`.
+- **Primary key:** `unique` + `not_null`. **Append tables:** `unique_combination_of_columns` on `(id, updated_at)`
+  because `id` alone repeats. This test comes from the `dbt_utils` package (declared in `dbt/packages.yml`, installed with
+  `make dbt-deps`).
+- **`accepted_values`:** take the list from the Postgres `CHECK`, not from memory: `promotion.type` is `percentage`,
+  `fixed_amount` (not `fixed`); `status` at the source is `completed`, `cancelled`, `returned` (filtered in staging, so no
+  longer tested).
+- **`relationships`:** put it on the **child** table, on the foreign key column, pointing to the parent. Null values are
+  skipped, so a required foreign key also needs `not_null`. Do not add one from `product_id` to `stg_product` (many rows
+  per `product_id`); fact-to-dimension checks are done in marts.
+- Every model and important column has a `description`, shown in `dbt docs`.
 
 ```bash
 make dbt-deps
-cd dbt && uv run dbt build -s staging     # 10 view và test của chúng; kỳ vọng ERROR=0
+cd dbt && uv run dbt build -s staging     # 10 views and their tests; expect ERROR=0
 ```
 
-### Quyết định về `status`
+### Decision on `status`
 
-Nguồn có ba trạng thái (một lần đo: 94.982 completed, 3.027 returned, 2.009 cancelled). Chỉ `completed` vào analytics,
-nên staging lọc ngay và bỏ cột; các tầng sau không còn quan tâm. Dòng chi tiết (`stg_sales_transaction_item`) được lọc
-bằng `transaction_id in (select ... from stg_sales_transaction)` để không còn dòng mồ côi. *Hạn chế:* giao dịch
-`completed` sau đó đổi sang `returned` thì fact không tự cập nhật; generator hiện không tạo kiểu thay đổi này và có
-test canh giả định (`assert_no_transaction_changes_status`).
+The source has three statuses (one measurement: 94,982 completed, 3,027 returned, 2,009 cancelled). Only `completed` goes
+into analytics, so staging filters right away and drops the column; later layers do not deal with it. Line items
+(`stg_sales_transaction_item`) are filtered with `transaction_id in (select ... from stg_sales_transaction)` so no orphan
+rows remain. *Limitation:* a `completed` transaction that later changes to `returned` is not updated in the fact. The
+generator does not create this kind of change today, and a test guards the assumption
+(`assert_no_transaction_changes_status`).
 
-### Lỗi hay gặp
+### Common errors
 
-| Lỗi | Nguyên nhân | Cách xử lý |
+| Error | Cause | Fix |
 |---|---|---|
-| `No dbt_project.yml found` | Chạy dbt ở thư mục gốc repo | `cd dbt` trước |
-| `'dbt_utils' is undefined` | Chưa khai báo hoặc chưa cài package | Tạo `packages.yml`, chạy `dbt deps` |
-| `accepted_values` fail | Danh sách giá trị lệch thực tế (`fixed` vs `fixed_amount`) | Đối chiếu `CHECK` ở nguồn |
-| Dedup làm mất phiên bản | `updated_at` thiếu trong `partition by` | Thêm vào `partition by` |
+| `No dbt_project.yml found` | Running dbt from the repo root | `cd dbt` first |
+| `'dbt_utils' is undefined` | Package not declared or not installed | Create `packages.yml`, run `dbt deps` |
+| `accepted_values` fails | Value list does not match reality (`fixed` vs `fixed_amount`) | Check against the source `CHECK` |
+| Dedup loses versions | `updated_at` missing from `partition by` | Add it to `partition by` |
 
-> Đọc lỗi dbt: bắt đầu từ dòng `Error` **đầu tiên** (không phải cuối), xem file và giai đoạn (parse hay chạy SQL).
-> Chi tiết ở `dbt/logs/dbt.log`, SQL đã biên dịch ở `dbt/target/compiled/`.
+> Reading dbt errors: start from the **first** `Error` line (not the last), and note the file and phase (parse or SQL
+> run). Details are in `dbt/logs/dbt.log`; compiled SQL is in `dbt/target/compiled/`.
 
-Đọc thêm: [Add data tests to your DAG](https://docs.getdbt.com/docs/build/data-tests),
+Further reading: [Add data tests to your DAG](https://docs.getdbt.com/docs/build/data-tests),
 [Packages](https://docs.getdbt.com/docs/build/packages),
 [Snowflake: QUALIFY](https://docs.snowflake.com/en/sql-reference/constructs/qualify).
 
-## Bước 4 — Intermediate: SCD2 cho product và employee
+## Step 4: Intermediate: SCD2 for product and employee
 
-`int_product_scd2` và `int_employee_scd2` (table, schema `INTERMEDIATE`) biến các dòng nhiều phiên bản ở staging thành
-các phiên bản có khoảng hiệu lực. Dựng bằng window function, **không dùng `dbt snapshot`**, nên chạy lại
-(`--full-refresh`) luôn ra cùng kết quả vì RAW giữ toàn bộ lịch sử.
+`int_product_scd2` and `int_employee_scd2` (tables, `INTERMEDIATE` schema) turn the multi-version rows from staging into
+versions with validity ranges. They are built with window functions, **not `dbt snapshot`**, so a rerun
+(`--full-refresh`) always gives the same result because RAW keeps the full history.
 
-### Cách dựng
+### How it is built
 
-1. `LAG` các cột theo dõi theo `partition by <id> order by updated_at`.
-2. Giữ dòng đầu của mỗi id và những dòng mà **bất kỳ cột theo dõi nào** `IS DISTINCT FROM` giá trị dòng trước. Không
-   dùng `DISTINCT` hay `GROUP BY` theo giá trị: A, B, A phải ra 3 phiên bản. `IS DISTINCT FROM` xử lý đúng `NULL`.
-3. `LEAD(updated_at)` **sau khi đã lọc** làm `valid_to`; phiên bản cuối có `valid_to = 9999-12-31` và `is_current = true`.
-4. Phiên bản đầu của mỗi id có `valid_from = 1900-01-01`: dòng đầu trong RAW chỉ xuất hiện ở lần nạp đầu, sau toàn bộ
-   giao dịch lịch sử; dùng `updated_at` hay `created_at` thật sẽ làm giao dịch cũ không khớp phiên bản nào.
-5. Cột Type 1 lấy giá trị mới nhất của id bằng `FIRST_VALUE(...) over (partition by id order by updated_at desc)`, áp
-   lên mọi phiên bản (nếu không sẽ thành "SCD2 thiếu").
+1. `LAG` the tracked columns with `partition by <id> order by updated_at`.
+2. Keep the first row of each id and the rows where **any tracked column** `IS DISTINCT FROM` the previous row's value.
+   Do not use `DISTINCT` or `GROUP BY` on values: A, B, A must give 3 versions. `IS DISTINCT FROM` handles `NULL`
+   correctly.
+3. `LEAD(updated_at)` **after filtering** becomes `valid_to`; the last version has `valid_to = 9999-12-31` and
+   `is_current = true`.
+4. The first version of each id has `valid_from = 1900-01-01`: the first RAW row only appears at the first load, after
+   all historical transactions. Using the real `updated_at` or `created_at` would leave old transactions matching no
+   version.
+5. Type 1 columns take the latest value for the id with `FIRST_VALUE(...) over (partition by id order by updated_at desc)`,
+   applied to every version (otherwise it becomes an "incomplete SCD2").
 
-| Model | Cột Type 2 (tạo phiên bản) | Cột Type 1 (mới nhất) |
+| Model | Type 2 columns (create versions) | Type 1 columns (latest) |
 |---|---|---|
 | `int_product_scd2` | `unit_cost`, `unit_price`, `category_id`, `brand_id` | `product_sku`, `product_name` |
 | `int_employee_scd2` | `store_id` | `employee_name`, `salary`, `address`, `start_date`, `end_date` |
 
-`int_employee_scd2` không giữ `date_of_birth`, `phone_number` vì dashboard không dùng. Cả hai dùng `valid_to =
-9999-12-31` thay cho `NULL`: join khoảng `valid_from <= ts < valid_to` với `NULL` cho kết quả rỗng và âm thầm làm rơi
-phiên bản hiện hành.
+`int_employee_scd2` does not keep `date_of_birth` or `phone_number` because the dashboard does not use them. Both use
+`valid_to = 9999-12-31` instead of `NULL`: a range join `valid_from <= ts < valid_to` against `NULL` returns nothing and
+silently drops the current version.
 
-### Test
+### Tests
 
-Test generic trong `___models.yml`: `unique_combination_of_columns (id, valid_from)`, `not_null` cho khóa và các cột hiệu
-lực, `expression_is_true` `(valid_to = '9999-12-31') = is_current`. Singular test trong `dbt/tests/` (mỗi file là một câu
-`SELECT` trả về **các dòng sai**; không có dòng nào thì pass):
+Generic tests in `___models.yml`: `unique_combination_of_columns (id, valid_from)`, `not_null` on the key and validity
+columns, `expression_is_true` `(valid_to = '9999-12-31') = is_current`. Singular tests in `dbt/tests/` (each file is a
+`SELECT` that returns **the bad rows**; no rows means pass):
 
-| Test | Kiểm tra |
+| Test | Checks |
 |---|---|
-| `*_no_overlap` | khoảng hiệu lực không chồng lấn (employee còn kiểm không hở: `next_valid_from = valid_to`) |
-| `*_single_current` | mỗi id có đúng một phiên bản hiện hành |
-| `*_first_version_from_1900` | phiên bản đầu bắt đầu từ 1900-01-01 |
-| `*_no_identical_adjacent` | không có hai phiên bản liền kề giống hệt ở các cột theo dõi |
-| `*_type1_consistent` | cột Type 1 giống nhau trên mọi phiên bản của một id |
-| `assert_product_scd2_complete`, `*_valid_range` | mọi sản phẩm ở staging có mặt; `valid_to > valid_from` |
+| `*_no_overlap` | validity ranges do not overlap (employee also checks for no gaps: `next_valid_from = valid_to`) |
+| `*_single_current` | each id has exactly one current version |
+| `*_first_version_from_1900` | the first version starts at 1900-01-01 |
+| `*_no_identical_adjacent` | no two adjacent versions are identical in the tracked columns |
+| `*_type1_consistent` | Type 1 columns are the same across all versions of an id |
+| `assert_product_scd2_complete`, `*_valid_range` | every product in staging is present; `valid_to > valid_from` |
 
-> **Test cấu trúc không thay cho test đúng thông số.** Bản đầu của `int_product_scd2` chỉ so sánh hai cột giá, thiếu
-> `category_id` và `brand_id`, nhưng vẫn qua hết test cấu trúc (không chồng lấn, đúng một phiên bản hiện hành). Chỉ khi
-> thêm test đối chiếu thông số (`first_version_from_1900`, `no_identical_adjacent`, `type1_consistent`) mới bắt được.
+> **Structural tests do not replace spec tests.** The first version of `int_product_scd2` compared only the two price
+> columns and missed `category_id` and `brand_id`, yet passed every structural test (no overlap, exactly one current
+> version). Only the spec tests (`first_version_from_1900`, `no_identical_adjacent`, `type1_consistent`) caught it.
 
 ```bash
-cd dbt && uv run dbt build -s intermediate     # 2 table và test; kỳ vọng ERROR=0
+cd dbt && uv run dbt build -s intermediate     # 2 tables and tests; expect ERROR=0
 ```
 
-### Kiểm chứng bằng thay đổi thật ở nguồn
+### Verify with a real change at the source
 
-Chạy một cycle `stream` (đổi giá 5 sản phẩm, chuyển nhân viên 51 từ cửa hàng 7 sang 5), nạp lại, rồi build:
+Run one `stream` cycle (changes the price of 5 products, moves employee 51 from store 7 to store 5), reload, then build:
 
 ```bash
 make stream && make ingest && make dbt-build
 ```
 
-| Đại lượng | Trước | Sau | Ý nghĩa |
+| Quantity | Before | After | Meaning |
 |---|---|---|---|
-| `raw.product` | 900 dòng | 905 | RAW chỉ thêm dòng (append) |
-| `dim_product` (kể cả Unknown) | 901 | 906 | thêm đúng 5 phiên bản |
-| `dim_product` hiện hành | 501 | 501 | mỗi sản phẩm vẫn đúng một phiên bản hiện hành |
-| `dim_employee` | 121 | 122 | thêm đúng 1 phiên bản |
-| `fct_sales` | 270.973 | 270.973 | không có giao dịch mới nên fact không đổi |
-| Test dbt | 168 pass | 168 pass | không chồng lấn, đúng một phiên bản hiện hành vẫn đúng |
+| `raw.product` | 900 rows | 905 | RAW only adds rows (append) |
+| `dim_product` (including Unknown) | 901 | 906 | exactly 5 new versions |
+| `dim_product` current | 501 | 501 | each product still has exactly one current version |
+| `dim_employee` | 121 | 122 | exactly 1 new version |
+| `fct_sales` | 270,973 | 270,973 | no new transactions, so the fact does not change |
+| dbt tests | 168 pass | 168 pass | no overlap and exactly one current version still hold |
 
-Ví dụ sản phẩm 45 (`unit_cost` 22.300 đến 23.200) có hai phiên bản: bản cũ từ `1900-01-01` đến thời điểm đổi, bản mới từ
-đó đến `9999-12-31` và `is_current`. Điều quan trọng nhất: **548 dòng fact cũ của sản phẩm 45 vẫn trỏ vào phiên bản cũ
-và giữ `unit_cost = 22.300`**, và không dòng nào có `unit_cost` khác phiên bản dimension nó trỏ tới. Nghĩa là đổi giá về
-sau không làm sai lợi nhuận đã ghi, đúng mục đích của SCD2.
+For example, product 45 (`unit_cost` 22,300 to 23,200) has two versions: the old one from `1900-01-01` to the change, and
+the new one from then to `9999-12-31` with `is_current`. Most important: **the 548 existing fact rows for product 45 still
+point to the old version and keep `unit_cost = 22,300`**, and no row has a `unit_cost` different from the dimension
+version it points to. So a later price change does not corrupt profit already recorded, which is the point of SCD2.
 
-Quan sát phụ: mốc `1900-01-01` và `9999-12-31` hiện với múi giờ `-08:00` (múi giờ phiên làm việc của Snowflake) thay vì
-UTC, vì `int_*_scd2` dùng `::timestamp` không múi giờ. Không ảnh hưởng join vì hai mốc nằm rất xa mọi giao dịch; đổi sang
-`::timestamp_tz` ở UTC sẽ gọn hơn (việc còn mở ở cuối trang).
+Side note: the `1900-01-01` and `9999-12-31` bounds show with the `-08:00` time zone (the Snowflake session time zone)
+instead of UTC, because `int_*_scd2` uses `::timestamp` without a time zone. Joins are not affected because both bounds
+are far from any transaction. Switching to `::timestamp_tz` in UTC would be cleaner (open item at the end of this page).
 
-Đọc thêm: [Snowflake: LAG](https://docs.snowflake.com/en/sql-reference/functions/lag),
+Further reading: [Snowflake: LAG](https://docs.snowflake.com/en/sql-reference/functions/lag),
 [Kimball: SCD Type 2](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/type-2/).
 
-## Bước 5 — Marts: dimension và `fct_sales`
+## Step 5: Marts: dimensions and `fct_sales`
 
-### Dimension
+### Dimensions
 
-| Model | Loại | Ghi chú |
+| Model | Type | Notes |
 |---|---|---|
-| `dim_store`, `dim_payment_method` | Type 1 | Khóa thay thế `<tên>_key = hash(<id>)` bằng macro `surrogate_key` |
-| `dim_promotion` | Type 1 | Có `promotion_label` (nhãn hiển thị), tách khỏi `promotion_type` để `accepted_values` vẫn đúng |
-| `dim_product`, `dim_employee` | Type 2 | Lớp mỏng trên `int_*_scd2`; khóa thay thế `hash(id, valid_from)` nên khác nhau giữa các phiên bản. `dim_product` có thêm `category_name`, `brand_name` (join `stg_category`, `stg_brand`) |
-| `dim_date`, `dim_time` | Type 0, sinh ra | `GENERATOR` + `var('date_start')`, `var('date_days')`; `dim_time` có 1.440 dòng |
+| `dim_store`, `dim_payment_method` | Type 1 | Surrogate key `<name>_key = hash(<id>)` via the `surrogate_key` macro |
+| `dim_promotion` | Type 1 | Has `promotion_label` (display label), separate from `promotion_type` so `accepted_values` still holds |
+| `dim_product`, `dim_employee` | Type 2 | Thin layer on `int_*_scd2`; surrogate key `hash(id, valid_from)`, so it differs between versions. `dim_product` also has `category_name`, `brand_name` (joined from `stg_category`, `stg_brand`) |
+| `dim_date`, `dim_time` | Type 0, generated | `GENERATOR` + `var('date_start')`, `var('date_days')`; `dim_time` has 1,440 rows |
 
-- Mọi dimension có dòng `-2` "Unknown" (thêm bằng `union all`). `dim_promotion` có thêm `-1` "No promotion". Phân biệt: `-1`
-  là dòng hàng không có khuyến mãi (hợp lệ), `-2` là khóa chưa có trong dimension (dữ liệu đến trễ).
-- Khóa thay thế là số 64 bit **có dấu** do `HASH` của Snowflake, nên nhiều khóa là số âm rất lớn. Đó chỉ là mã định
-  danh, không liên quan `-1`, `-2` (giá trị cố định). Đọc thêm: [Snowflake: HASH](https://docs.snowflake.com/en/sql-reference/functions/hash).
-- **Nhãn bằng tiếng Anh, cho toàn dashboard.** Dữ liệu nguồn (danh mục `Beverages`, phương thức `cash`, tên sản phẩm)
-  đã là tiếng Anh, nên mọi nhãn do dbt sinh ra cũng tiếng Anh để dashboard không lẫn hai ngôn ngữ: `dim_date`
-  (`January`, `Monday`), `dim_promotion` (`15% off`, `No promotion`), `dim_time` (`Morning`, `AM`), dòng `Unknown`.
-- Dữ liệu cá nhân (`salary`, `address` của `dim_employee`) gắn `meta: {pii: true}`.
-- Test: `unique` + `not_null` cho khóa thay thế; `relationships` (`dim_employee.store_id` sang `dim_store`; `category_id`,
-  `brand_id` sang staging); singular test cho `dim_date` (đủ số ngày, liên tục) và `dim_time` (đúng 1.440 dòng), loại
-  dòng `-2` khỏi phép đếm.
+- Every dimension has a `-2` "Unknown" row (added with `union all`). `dim_promotion` also has `-1` "No promotion". The
+  difference: `-1` is a line with no promotion (valid), `-2` is a key not yet in the dimension (late-arriving data).
+- Surrogate keys are **signed** 64-bit numbers from Snowflake `HASH`, so many keys are very large negative numbers. They
+  are just identifiers and unrelated to `-1`, `-2` (fixed values). Further reading:
+  [Snowflake: HASH](https://docs.snowflake.com/en/sql-reference/functions/hash).
+- **Labels are in English, across the whole dashboard.** Source data (category `Beverages`, method `cash`, product names)
+  is already English, so every dbt-generated label is English too, so the dashboard does not mix two languages:
+  `dim_date` (`January`, `Monday`), `dim_promotion` (`15% off`, `No promotion`), `dim_time` (`Morning`, `AM`), the
+  `Unknown` row.
+- Personal data (`salary`, `address` in `dim_employee`) is tagged `meta: {pii: true}`.
+- Tests: `unique` + `not_null` on surrogate keys; `relationships` (`dim_employee.store_id` to `dim_store`; `category_id`,
+  `brand_id` to staging); singular tests for `dim_date` (full day count, continuous) and `dim_time` (exactly 1,440 rows),
+  excluding the `-2` row from the count.
 
 ### `fct_sales` (transaction fact, incremental)
 
-Grain: một dòng mỗi dòng chi tiết (`transaction_id`, `line_number`) của hóa đơn `completed`.
+Grain: one row per line item (`transaction_id`, `line_number`) of a `completed` transaction.
 
 ```sql
 {{ config(materialized='incremental', unique_key=['transaction_id', 'line_number']) }}
 ```
 
-**Hợp đồng số đo:**
+**Measure contract:**
 
-| Cột | Công thức |
+| Column | Formula |
 |---|---|
 | `gross_amount` | `quantity * regular_price` |
 | `discount_amount` | `percentage`: `quantity * regular_price * amount / 100`; `fixed_amount`: `quantity * MIN(amount, regular_price)` |
-| `coupon_amount` | theo dòng, **không** nhân `quantity` |
+| `coupon_amount` | per line, **not** multiplied by `quantity` |
 | `net_amount` | `gross_amount - discount_amount - coupon_amount` |
-| `unit_cost` | lấy từ phiên bản `dim_product` hợp lệ tại `transaction_ts` |
+| `unit_cost` | from the `dim_product` version valid at `transaction_ts` |
 | `cost_amount`, `gross_profit` | `quantity * unit_cost`; `net_amount - cost_amount` |
 
-- **Nguồn:** `stg_sales_transaction_item` join `stg_sales_transaction` (cả hai đã lọc completed).
-- **Incremental:** lọc `greatest(i.updated_at, t.updated_at) >= max(source_updated_at)` của chính bảng (`{{ this }}`).
-  Dùng cả hai `updated_at` vì chúng thật sự lệch nhau (14.578 dòng chi tiết có `updated_at` sớm hơn hóa đơn). Dùng `>=`
-  thay `>` để không bỏ sót dòng đúng ở biên; `unique_key` làm merge nên xử lý lại dòng cũ không sinh trùng.
-- **Join dimension:** `left join` rồi `coalesce` về `-2` (và `-1` cho promotion rỗng). Với `dim_product` và `dim_employee`,
-  join theo khoảng nửa mở `transaction_ts >= valid_from and transaction_ts < valid_to` để mỗi giao dịch khớp đúng một
-  phiên bản. *Đóng cả hai đầu thì fan-out (đếm đôi), mở cả hai đầu thì mất dòng; cả hai đều lỗi im lặng.*
-- **Múi giờ:** `transaction_ts` lưu UTC (giờ UTC 0 đến 14). `date_key` và `time_key` tính từ
-  `convert_timezone(var('local_tz'), transaction_ts)` (giờ địa phương 7 đến 21). Tính theo UTC thì 58.804 dòng bị gán buổi
-  `Night` sai và ngày có thể nhảy sang hôm sau. `transaction_ts` gốc (UTC) vẫn giữ để join khoảng SCD2.
-  Đọc thêm: [Snowflake: CONVERT_TIMEZONE](https://docs.snowflake.com/en/sql-reference/functions/convert_timezone).
-- **Khóa ngày, giờ tra lại dimension:** `left join` với `dim_date`, `dim_time` rồi `coalesce` về `-2`, giống năm dimension
-  còn lại, nên hợp đồng "mọi dimension có dòng -2" dùng thật cho cả hai và lineage có đủ hai mũi tên tới `fct_sales`.
+- **Source:** `stg_sales_transaction_item` joined to `stg_sales_transaction` (both already filtered to completed).
+- **Incremental:** filter `greatest(i.updated_at, t.updated_at) >= max(source_updated_at)` of the table itself
+  (`{{ this }}`). Both `updated_at` columns are used because they really do differ (14,578 line items have an
+  `updated_at` earlier than their transaction). Use `>=` instead of `>` so rows exactly at the boundary are not missed;
+  `unique_key` makes it a merge, so reprocessing old rows creates no duplicates.
+- **Dimension joins:** `left join`, then `coalesce` to `-2` (and `-1` for a null promotion). For `dim_product` and
+  `dim_employee`, join on the half-open range `transaction_ts >= valid_from and transaction_ts < valid_to` so each
+  transaction matches exactly one version. *Closed at both ends causes fan-out (double counting); open at both ends loses
+  rows. Both fail silently.*
+- **Time zone:** `transaction_ts` is stored in UTC (UTC hours 0 to 14). `date_key` and `time_key` are computed from
+  `convert_timezone(var('local_tz'), transaction_ts)` (local hours 7 to 21). Computing in UTC would put 58,804 rows in the
+  wrong `Night` period, and the date could roll over to the next day. The original `transaction_ts` (UTC) is kept for the
+  SCD2 range join.
+  Further reading: [Snowflake: CONVERT_TIMEZONE](https://docs.snowflake.com/en/sql-reference/functions/convert_timezone).
+- **Date and time keys are looked up in their dimensions:** `left join` to `dim_date`, `dim_time`, then `coalesce` to
+  `-2`, the same as the other five dimensions. So the "every dimension has a -2 row" contract really applies to both,
+  and lineage shows both arrows into `fct_sales`.
 
-**Test của `fct_sales`:** `unique_combination_of_columns (transaction_id, line_number)`; `relationships` tới cả bảy
-dimension; `not_null` cho các khóa (kể cả `unit_cost`, để dòng không khớp phiên bản sản phẩm bị bắt thay vì âm thầm cho
-`gross_profit` rỗng); tiền không âm (`net_amount`, `gross_amount`, `coupon_amount` >= 0, `discount_amount <=
-gross_amount`, `quantity > 0`); singular test số dòng fact bằng số dòng nguồn đã lọc
-(`assert_fct_sales_row_count_matches_source`).
+**`fct_sales` tests:** `unique_combination_of_columns (transaction_id, line_number)`; `relationships` to all seven
+dimensions; `not_null` on the keys (including `unit_cost`, so a row that matches no product version is caught instead of
+silently giving a null `gross_profit`); non-negative money (`net_amount`, `gross_amount`, `coupon_amount` >= 0,
+`discount_amount <= gross_amount`, `quantity > 0`); a singular test that the fact row count equals the filtered source
+row count (`assert_fct_sales_row_count_matches_source`).
 
 ```bash
 cd dbt
-uv run dbt build -s fct_sales                    # lần đầu: dựng đầy đủ
-uv run dbt build -s fct_sales                    # lần hai: incremental, số dòng không đổi
-uv run dbt build -s fct_sales --full-refresh     # dựng lại, cùng kết quả
+uv run dbt build -s fct_sales                    # first run: full build
+uv run dbt build -s fct_sales                    # second run: incremental, row count unchanged
+uv run dbt build -s fct_sales --full-refresh     # rebuild, same result
 ```
 
-Đọc thêm: [Configure incremental models](https://docs.getdbt.com/docs/build/incremental-models).
+Further reading: [Configure incremental models](https://docs.getdbt.com/docs/build/incremental-models).
 
-### Kiểm chứng incremental bằng giao dịch mới
+### Verify incremental with new transactions
 
 ```bash
 make stream-sales && make ingest && make dbt-build
 ```
 
-Một lần chạy thật (300 giao dịch mới, từ 2026-10-08 13:58 đến 2026-10-09 21:53, giờ địa phương):
+One real run (300 new transactions, from 2026-10-08 13:58 to 2026-10-09 21:53, local time):
 
-| Đại lượng | Trước | Sau | Ý nghĩa |
+| Quantity | Before | After | Meaning |
 |---|---|---|---|
-| dlt nạp | | 300 `sales_transaction`, 823 `sales_transaction_item` | chỉ dòng mới (con trỏ `updated_at`) |
-| `stg_sales_transaction_item` | 270.973 | 271.766 | +793 dòng chi tiết completed |
-| `fct_sales` | 270.973 | **271.766** | **đúng +793, bằng số dòng nguồn đã lọc**; test đếm dòng pass |
-| Khóa `-2`, `unit_cost` rỗng | 0 | 0 | mọi dòng mới khớp dimension và phiên bản |
-| Test dbt | 168 pass | 168 pass | |
+| dlt load | | 300 `sales_transaction`, 823 `sales_transaction_item` | only new rows (`updated_at` cursor) |
+| `stg_sales_transaction_item` | 270,973 | 271,766 | +793 completed line items |
+| `fct_sales` | 270,973 | **271,766** | **exactly +793, equal to the filtered source rows**; row count test passes |
+| `-2` keys, null `unit_cost` | 0 | 0 | every new row matches its dimensions and versions |
+| dbt tests | 168 pass | 168 pass | |
 
-- **Incremental chỉ thêm dòng mới.** Chạy `dbt build` lần hai ngay sau đó, `fct_sales` vẫn 271.766 dòng (không sinh trùng
-  nhờ `unique_key` và `>=`).
-- **SCD2 hoạt động ngay trên dòng mới:** trong 793 dòng mới, 767 trỏ vào phiên bản `dim_product` hiện hành và 26 trỏ vào
-  phiên bản cũ, vì chúng xảy ra trước lúc sản phẩm đổi giá, nên `unit_cost` đúng tại thời điểm bán.
-- Chi tiết của dữ liệu mô phỏng: `regular_price` của giao dịch mới là giá bán **lúc sinh dữ liệu**; giao dịch có thời điểm
-  trước một lần đổi giá trong cùng buổi mang giá mới, còn `unit_cost` đúng phiên bản cũ. Không test nào so `regular_price`
-  với `unit_price` của dimension, nên không ảnh hưởng.
+- **Incremental only adds new rows.** Running `dbt build` a second time right after, `fct_sales` still has 271,766 rows
+  (no duplicates thanks to `unique_key` and `>=`).
+- **SCD2 works right away on new rows:** of the 793 new rows, 767 point to the current `dim_product` version and 26 point
+  to an old version because they happened before the product's price change, so `unit_cost` is correct at the time of sale.
+- A detail of the simulated data: `regular_price` on new transactions is the selling price **at generation time**. A
+  transaction timed before a price change in the same session carries the new price, while `unit_cost` is the correct old
+  version. No test compares `regular_price` with the dimension `unit_price`, so this has no effect.
 
-### Hạn chế: dòng đã gán khóa `-2` không tự sửa
+### Limitation: rows assigned a `-2` key do not fix themselves
 
-Lần incremental sau chỉ đọc dòng có `source_updated_at` mới hơn, nên dòng cũ không được join lại với dimension. Trường hợp
-thật sự xảy ra là giao dịch tới trước bản ghi dimension (dữ liệu đến trễ).
+The next incremental run only reads rows with a newer `source_updated_at`, so old rows are not rejoined to the
+dimensions. The real case is a transaction arriving before its dimension record (late-arriving data).
 
-**Quyết định: dùng `--full-refresh` của riêng `fct_sales`** (`make dbt-full-refresh`, hoặc job `fct_sales_full_refresh` trong
-Dagster, chạy tay). Không đụng RAW vì RAW giữ lịch sử SCD2. Đủ cho dự án này (270 nghìn dòng, vài giây). Cách còn lại là
-mở rộng bộ lọc incremental để xử lý lại các dòng đang có khóa `-2`: chính xác hơn khi dữ liệu lớn, nhưng phải đọc lại
-chính bảng fact và liệt kê mọi khóa có thể là `-2`, quá phức tạp so với lợi ích.
+**Decision: use `--full-refresh` on `fct_sales` only** (`make dbt-full-refresh`, or the `fct_sales_full_refresh` job in
+Dagster, run by hand). RAW is not touched because RAW holds the SCD2 history. This is enough for this project (270
+thousand rows, a few seconds). The alternative is to widen the incremental filter to reprocess rows that currently have a
+`-2` key: more precise at large volumes, but it has to reread the fact table itself and list every key that could be
+`-2`, which is too complex for the benefit.
 
-**Hệ quả cho người đọc số liệu:** dòng có `product_key = -2` có `unit_cost` rỗng nên `cost_amount` và `gross_profit` rỗng;
-`SUM(gross_profit)` bỏ qua chúng, tức lợi nhuận thấp hơn thực tế đến lần full-refresh kế tiếp. Doanh thu (`net_amount`)
-vẫn đủ. Test `not_null` của `unit_cost` đặt `severity: warn` vì dữ liệu đến trễ là trường hợp đã chấp nhận, nên cần xem
-cảnh báo khi chạy. Các test `not_null` và `relationships` không bắt được `-2` vì đó là giá trị hợp lệ.
+**What this means for people reading the numbers:** rows with `product_key = -2` have a null `unit_cost`, so
+`cost_amount` and `gross_profit` are null. `SUM(gross_profit)` skips them, so profit is lower than reality until the next
+full refresh. Revenue (`net_amount`) is still complete. The `not_null` test on `unit_cost` has `severity: warn` because
+late-arriving data is an accepted case, so watch for warnings when running. The `not_null` and `relationships` tests do
+not catch `-2` because it is a valid value.
 
-## Bước 6 — Lineage và review
+## Step 6: Lineage and review
 
-Sơ đồ dưới sinh từ `dbt/target/manifest.json` (sau `dbt docs generate`), nên khớp với code. Xem bản tương tác bằng
-`make dbt-docs` (`http://localhost:8080`), bấm nút lineage ở góc dưới bên phải, lọc bằng `+fct_sales` để xem mọi thứ
-fact phụ thuộc.
+The diagram below is generated from `dbt/target/manifest.json` (after `dbt docs generate`), so it matches the code. See
+the interactive version with `make dbt-docs` (`http://localhost:8080`): click the lineage button at the bottom right and
+filter with `+fct_sales` to see everything the fact depends on.
 
 ```mermaid
 flowchart LR
@@ -432,44 +450,44 @@ flowchart LR
   stg_store --> dim_store
 ```
 
-Ảnh chụp từ `dbt docs` (nhánh bán hàng ở staging): mỗi bảng RAW có một model staging, và `stg_sales_transaction` đi vào
-`stg_sales_transaction_item` (staging đọc staging để lọc `completed`).
+Screenshot from `dbt docs` (the sales branch in staging): each RAW table has one staging model, and
+`stg_sales_transaction` feeds `stg_sales_transaction_item` (staging reads staging to filter `completed`).
 
-![Lineage nhánh bán hàng ở staging](../../assets/diagrams/dbt-lineage-sales-staging.png)
+![Sales branch lineage in staging](../../assets/diagrams/dbt-lineage-sales-staging.png)
 
-### Quan sát khi đọc lineage
+### Observations from the lineage
 
-- **`fct_sales` phụ thuộc đúng chín nút:** hai model staging bán hàng và bảy dimension.
-- **`dim_date` và `dim_time` có cạnh tới `fct_sales`.** Lúc đầu không có vì fact tự tính khóa thay vì `ref`; đã chuyển
-  sang `left join` để lineage đúng và dùng được dòng `-2`.
-- **Một model staging chưa có model nào dùng: `stg_promotion_product`.** Nó dành cho phân tích độ phủ khuyến mãi
-  (factless fact), chưa làm. Tầng staging phản ánh nguồn nên giữ lại, nhưng ghi nhận để không tưởng là sót.
-  (`stg_brand`, `stg_category` giờ được `dim_product` dùng để lấy tên danh mục và nhãn hàng.)
-- Chiều mũi tên luôn đi source, staging, intermediate, marts; không có mũi tên ngược tầng.
+- **`fct_sales` depends on exactly nine nodes:** the two sales staging models and seven dimensions.
+- **`dim_date` and `dim_time` have edges to `fct_sales`.** At first they did not, because the fact computed the keys
+  itself instead of using `ref`. It was switched to a `left join` so the lineage is correct and the `-2` row can be used.
+- **One staging model is not used by any model yet: `stg_promotion_product`.** It is meant for promotion coverage
+  analysis (factless fact), not built yet. The staging layer mirrors the source, so it stays, but this is noted so nobody
+  thinks it was forgotten. (`stg_brand` and `stg_category` are now used by `dim_product` for category and brand names.)
+- Arrows always go source, staging, intermediate, marts; no arrow goes back a layer.
 
-### Lệnh qua Makefile
+### Makefile commands
 
-Chạy từ thư mục gốc repo; các lệnh `dbt-*` tự nạp `.env` và dùng dbt trong `.venv`:
+Run from the repo root; the `dbt-*` commands load `.env` and use the dbt in `.venv`:
 
-| Lệnh | Việc |
+| Command | What it does |
 |---|---|
-| `make dbt-deps` | Cài package dbt (`dbt_utils`) vào `dbt/dbt_packages` |
-| `make dbt-parse` | Sinh `dbt/target/manifest.json` (Dagster cần file này, xem [phase 6](06-dagster.md)) |
-| `make dbt-build` | `dbt build` toàn dự án (model và test), cần RAW đã có dữ liệu |
-| `make dbt-test` | Chỉ chạy test |
-| `make dbt-full-refresh` | Dựng lại `fct_sales` từ đầu, sửa dòng khóa `-2`; không đụng RAW |
-| `make dbt-docs` | Sinh và mở dbt docs (lineage) ở `http://localhost:8080` |
-| `make clean` | Xóa file sinh ra (cache, `dbt/target`, `dbt/logs`); không đụng `.env`, `.venv`, key, `dbt_packages`; sau đó cần `make dbt-parse` để Dagster có manifest |
+| `make dbt-deps` | Installs dbt packages (`dbt_utils`) into `dbt/dbt_packages` |
+| `make dbt-parse` | Generates `dbt/target/manifest.json` (Dagster needs this file, see [phase 6](06-dagster.md)) |
+| `make dbt-build` | Full-project `dbt build` (models and tests); needs RAW to have data |
+| `make dbt-test` | Runs tests only |
+| `make dbt-full-refresh` | Rebuilds `fct_sales` from scratch, fixing `-2` key rows; does not touch RAW |
+| `make dbt-docs` | Generates and serves dbt docs (lineage) at `http://localhost:8080` |
+| `make clean` | Deletes generated files (cache, `dbt/target`, `dbt/logs`); does not touch `.env`, `.venv`, keys, `dbt_packages`; afterwards run `make dbt-parse` so Dagster has a manifest |
 
-### Việc còn mở
+### Open items
 
-- Đổi `::timestamp` thành `::timestamp_tz` ở `int_*_scd2` (không bắt buộc, vô hại vì `UNION ALL` ở dimension ép về
-  `timestamp_tz`).
-- Test `severity: warn` đếm dòng có khóa `-2` trong `fct_sales` (chưa thêm; hiện số dòng này bằng 0).
-- `int_employee_scd2` chưa có test `complete` như bên product.
-- Phân tích khuyến mãi dùng `stg_promotion_product`: chưa làm, ngoài phạm vi hiện tại.
-- Lập lịch `--full-refresh`: chọn Dagster thay vì Snowflake Tasks, vì Tasks chỉ chạy SQL bên trong Snowflake, không điều
-  phối được bước dlt đọc từ Postgres, còn Dagster nối cả chuỗi nạp, dbt và kiểm tra trong một đồ thị có lịch sử chạy. Job
-  full-refresh hiện chạy tay, chưa có lịch ([phase 6](06-dagster.md)).
+- Change `::timestamp` to `::timestamp_tz` in `int_*_scd2` (optional; harmless because the `UNION ALL` in the
+  dimensions casts to `timestamp_tz`).
+- A `severity: warn` test counting rows with a `-2` key in `fct_sales` (not added; this count is currently 0).
+- `int_employee_scd2` has no `complete` test like product does.
+- Promotion analysis using `stg_promotion_product`: not built, out of current scope.
+- Scheduling `--full-refresh`: Dagster was chosen over Snowflake Tasks, because Tasks only run SQL inside Snowflake and
+  cannot orchestrate the dlt step that reads from Postgres, while Dagster links loading, dbt and checks in one graph with
+  run history. The full-refresh job is currently run by hand, with no schedule ([phase 6](06-dagster.md)).
 
-Tiếp theo: [Phase 6 — Dagster](06-dagster.md).
+Next: [Phase 6: Dagster](06-dagster.md).

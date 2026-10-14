@@ -1,5 +1,5 @@
-# Chạy trước mỗi `git commit` trên file đã stage. Cài một lần: `uv run pre-commit install`.
-# Chạy tay trên toàn repo: `uv run pre-commit run --all-files`.
+# Runs on staged files before every `git commit`. Install once: `uv run pre-commit install`.
+# Run by hand on the whole repo: `uv run pre-commit run --all-files`.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -13,10 +13,10 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=1024"]
-      # Chặn commit nhầm private key (Snowflake key pair dạng .p8)
+      # Block accidental commits of private keys (Snowflake .p8 key pairs)
       - id: detect-private-key
 
-  # Ruff chạy qua uv để dùng đúng phiên bản trong uv.lock, giống CI và hook của Claude
+  # Ruff runs through uv to use the exact version in uv.lock, like CI and the Claude hook
   - repo: local
     hooks:
       - id: ruff-check

@@ -4,7 +4,7 @@
 CREATE SCHEMA IF NOT EXISTS retail;
 SET search_path TO retail;
 
--- ---------- Hàm tự cập nhật updated_at ----------
+-- ---------- Function that maintains updated_at ----------
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -13,7 +13,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ---------- Bảng danh mục ----------
+-- ---------- Reference tables ----------
 CREATE TABLE store (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     store_name      VARCHAR(100) NOT NULL UNIQUE,
@@ -44,7 +44,7 @@ CREATE TABLE payment_method (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ---------- Nhân viên (nguồn cho dim_employee SCD2) ----------
+-- ---------- Employees (source of dim_employee SCD2) ----------
 CREATE TABLE employee (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     store_id        BIGINT NOT NULL REFERENCES store (id),
@@ -61,7 +61,7 @@ CREATE TABLE employee (
     CONSTRAINT chk_employee_dates CHECK (end_date IS NULL OR end_date >= start_date)
 );
 
--- ---------- Sản phẩm (nguồn cho dim_product SCD2) ----------
+-- ---------- Products (source of dim_product SCD2) ----------
 CREATE TABLE product (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     product_sku     VARCHAR(32) NOT NULL UNIQUE,
@@ -74,7 +74,7 @@ CREATE TABLE product (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ---------- Khuyến mãi ----------
+-- ---------- Promotions ----------
 CREATE TABLE promotion (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     type            VARCHAR(20) NOT NULL CHECK (type IN ('percentage', 'fixed_amount')),
@@ -95,10 +95,10 @@ CREATE TABLE promotion_product (
     PRIMARY KEY (product_id, promotion_id)
 );
 
--- ---------- Giao dịch ----------
+-- ---------- Transactions ----------
 CREATE TABLE sales_transaction (
     transaction_id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    store_id            BIGINT NOT NULL REFERENCES store (id),          -- cửa hàng tại thời điểm bán
+    store_id            BIGINT NOT NULL REFERENCES store (id),          -- store at the time of sale
     employee_id         BIGINT NOT NULL REFERENCES employee (id),
     payment_method_id   BIGINT NOT NULL REFERENCES payment_method (id),
     transaction_ts      TIMESTAMPTZ NOT NULL,
@@ -112,21 +112,21 @@ CREATE TABLE sales_transaction_item (
     transaction_id  BIGINT NOT NULL REFERENCES sales_transaction (transaction_id) ON DELETE CASCADE,
     line_number     SMALLINT NOT NULL CHECK (line_number > 0),
     product_id      BIGINT NOT NULL REFERENCES product (id),
-    promotion_id    BIGINT,                                            -- NULL = không khuyến mãi
+    promotion_id    BIGINT,                                            -- NULL = no promotion
     quantity        INTEGER NOT NULL CHECK (quantity > 0),
-    regular_price   NUMERIC(12, 2) NOT NULL CHECK (regular_price >= 0), -- giá tại thời điểm bán
+    regular_price   NUMERIC(12, 2) NOT NULL CHECK (regular_price >= 0), -- price at the time of sale
     coupon_amount   NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (coupon_amount >= 0),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (transaction_id, line_number),
-    -- Chỉ cho phép promotion áp dụng cho đúng sản phẩm (bỏ qua khi promotion_id NULL)
+    -- Only allow a promotion assigned to this product (skipped when promotion_id is NULL)
     CONSTRAINT fk_item_promotion_product
         FOREIGN KEY (product_id, promotion_id)
         REFERENCES promotion_product (product_id, promotion_id)
 );
 
 -- ---------- Index ----------
--- FK (Postgres không tự tạo index cho FK)
+-- FK (Postgres does not index FKs automatically)
 CREATE INDEX idx_employee_store            ON employee (store_id);
 CREATE INDEX idx_product_category          ON product (category_id);
 CREATE INDEX idx_product_brand             ON product (brand_id);
@@ -136,13 +136,13 @@ CREATE INDEX idx_txn_employee              ON sales_transaction (employee_id);
 CREATE INDEX idx_txn_ts                    ON sales_transaction (transaction_ts);
 CREATE INDEX idx_item_product              ON sales_transaction_item (product_id);
 
--- Cursor cho dlt incremental
+-- Cursor for dlt incremental
 CREATE INDEX idx_txn_updated_at            ON sales_transaction (updated_at);
 CREATE INDEX idx_item_updated_at           ON sales_transaction_item (updated_at);
 CREATE INDEX idx_product_updated_at        ON product (updated_at);
 CREATE INDEX idx_employee_updated_at       ON employee (updated_at);
 
--- ---------- Gắn trigger updated_at cho mọi bảng ----------
+-- ---------- Attach the updated_at trigger to every table ----------
 DO $$
 DECLARE t TEXT;
 BEGIN
