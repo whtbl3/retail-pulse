@@ -80,7 +80,7 @@ def test_cost_changes_within_bounds_and_is_rounded():
         assert e.new_unit_cost != e.old_unit_cost
         assert e.new_unit_cost % 100 == 0
         pct = abs(e.new_unit_cost / e.old_unit_cost - 1)
-        # sai số làm tròn tối đa 1 step (100đ)
+        # rounding error of at most 1 step (100 VND)
         assert pct <= Decimal(str(cfg.cost_change_pct_max)) + Decimal(100) / e.old_unit_cost
         assert e.new_unit_price == e.old_unit_price
         assert e.reason == REASON_COST
@@ -100,7 +100,7 @@ def test_price_changes_only_by_probability():
 
 
 def test_never_negative_margin_or_negative_values():
-    # Margin rất mỏng: cost sát price, biên độ lớn
+    # Very thin margin: cost close to price, large swings
     products = [
         ProductRecord(i, f"SKU-{i}", "p", Decimal(9_900), Decimal(10_000)) for i in range(1, 51)
     ]
@@ -159,7 +159,7 @@ def at(day: int, hour: int, minute: int = 0) -> datetime:
 
 
 def test_open_intervals_keep_only_opening_hours():
-    # 20:00 ngày 10 đến 09:00 ngày 11: chỉ còn 20–22h hôm trước và 7–9h hôm sau
+    # 20:00 on the 10th to 09:00 on the 11th: only 20-22h that day and 7-9h the next
     assert open_intervals(at(10, 20), at(11, 9)) == [
         (at(10, 20), at(10, 22)),
         (at(11, 7), at(11, 9)),
@@ -260,10 +260,10 @@ def test_run_once_updates_only_selected_products(seeded, session_factory):
     assert tick.applied_events == len(changed) == 5
     for pid in changed:
         b, a = before[pid], after[pid]
-        assert a[:5] == b[:5]  # id, sku, name, category, brand giữ nguyên
-        assert a[5] != b[5]  # unit_cost luôn đổi
+        assert a[:5] == b[:5]  # id, sku, name, category, brand unchanged
+        assert a[5] != b[5]  # unit_cost always changes
         assert Decimal(0) <= a[5] <= a[6]
-        assert a[7] > b[7]  # trigger trong DB đã cập nhật updated_at
+        assert a[7] > b[7]  # the DB trigger updated updated_at
     assert other_tables_state(session_factory) == others_before
 
 
@@ -279,7 +279,7 @@ def test_failed_cycle_rolls_back_everything(seeded, session_factory):
     before = products_by_id(session_factory)
     runner = make_runner(session_factory, max_products_per_tick=2)
     events = runner.policy.plan_changes(repo.list_active_products(), runner.config)
-    # Event thứ 2 mang giá cũ sai -> optimistic check thất bại -> hủy cả tick
+    # The 2nd event has a wrong old price -> optimistic check fails -> whole tick cancelled
     events[1] = replace(events[1], old_unit_cost=events[1].old_unit_cost + 1)
 
     with pytest.raises(RuntimeError):
@@ -292,10 +292,10 @@ def test_run_forever_n_cycles_without_waiting(seeded, session_factory):
     runner = make_runner(session_factory, max_products_per_tick=3, interval_seconds=30)
     before = products_by_id(session_factory)
 
-    # Cycle cuối: sleep ném KeyboardInterrupt như khi người dùng bấm Ctrl+C
+    # Last cycle: sleep raises KeyboardInterrupt as if the user pressed Ctrl+C
     side_effects = [None] * (n_cycles - 1) + [KeyboardInterrupt]
     with patch("time.sleep", side_effect=side_effects) as sleep:
-        runner.run_forever()  # tự bắt KeyboardInterrupt và thoát gọn
+        runner.run_forever()  # catches KeyboardInterrupt and exits cleanly
 
     assert runner.cycle == n_cycles
     assert sleep.call_count == n_cycles
@@ -322,7 +322,7 @@ def test_run_once_transfers_employees_to_another_store(seeded, session_factory):
     after = employees()
     moved = [i for i in before if before[i][1] != after[i][1]]
     assert tick.transferred_employees == len(moved) == 2
-    assert all(after[i][2] > before[i][2] for i in moved)  # trigger cập nhật updated_at
+    assert all(after[i][2] > before[i][2] for i in moved)  # trigger updates updated_at
 
 
 def count_sales(session_factory) -> tuple[int, int]:
@@ -347,7 +347,7 @@ def test_run_once_with_sales_inserts_new_transactions_in_opening_hours(seeded, s
     anchor = repo.last_sales_activity()
     before_tx, before_items = count_sales(session_factory)
     runner = make_runner(session_factory, sales_per_tick=40)
-    runner.clock = lambda: datetime.now(TZ) + timedelta(days=2)  # đủ giờ mở cửa sau lần seed
+    runner.clock = lambda: datetime.now(TZ) + timedelta(days=2)  # opening hours since the seed
 
     tick = runner.run_once()
 
@@ -361,7 +361,7 @@ def test_run_once_with_sales_inserts_new_transactions_in_opening_hours(seeded, s
                 "FROM retail.sales_transaction ORDER BY transaction_id DESC LIMIT 40"
             )
         ).all()
-        # Mỗi giao dịch có ít nhất một dòng; regular_price là giá hiện tại của product
+        # Every transaction has at least one line; regular_price is the product's current price
         orphans = session.execute(
             text(
                 "SELECT count(*) FROM retail.sales_transaction t WHERE NOT EXISTS "
@@ -379,7 +379,7 @@ def test_sales_are_skipped_when_no_opening_hours_have_passed(seeded, session_fac
     anchor = SourceRepository(session_factory).last_sales_activity()
     before = count_sales(session_factory)
     runner = make_runner(session_factory, sales_per_tick=10)
-    runner.clock = lambda: anchor + timedelta(seconds=1)  # chưa có thời gian trôi qua
+    runner.clock = lambda: anchor + timedelta(seconds=1)  # no time has passed yet
 
     assert runner.run_once().inserted_transactions == 0
     assert count_sales(session_factory) == before

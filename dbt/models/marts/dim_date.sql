@@ -26,7 +26,7 @@ FROM days
 
 UNION ALL
 
--- Thành viên Unknown cho khóa chưa có trong dimension
+-- Unknown member for keys not yet in the dimension
 SELECT
     -2        AS date_key,
     NULL      AS full_date,

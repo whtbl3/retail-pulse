@@ -6,7 +6,7 @@ from retail_pulse.ingestion.pipelines import retail_pipeline, retail_source
 
 
 class RetailDltTranslator(DagsterDltTranslator):
-    # dbt source('raw', 'store') có key ["raw", "store"]; đặt key dlt trùng để lineage nối liền.
+    # dbt source('raw', 'store') has key ["raw", "store"]; matching dlt keys join the lineage.
     def get_asset_spec(self, data: DltResourceTranslatorData):
         default_spec = super().get_asset_spec(data)
         return default_spec.replace_attributes(

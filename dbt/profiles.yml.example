@@ -1,5 +1,5 @@
-# Sao chép nội dung này vào ~/.dbt/profiles.yml (nằm NGOÀI repo).
-# Chỉ tham chiếu biến môi trường (xem .env.example), không ghi mật khẩu hay key vào file.
+# Copy this content into ~/.dbt/profiles.yml (OUTSIDE the repo).
+# Reference environment variables only (see .env.example); never write passwords or keys into the file.
 retail_pulse:
   target: dev
   outputs:

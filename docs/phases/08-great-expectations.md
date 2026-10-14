@@ -1,64 +1,67 @@
-# Phase 8 — Great Expectations (kiểm tra chất lượng RAW)
+# Phase 8: Great Expectations (RAW quality checks)
 
-Mục tiêu: chặn dữ liệu xấu **ngay ở RAW**, trước khi dbt chạy. Great Expectations (GE) bổ sung cho dbt test chứ không thay
-thế: dbt test vẫn là cơ chế chất lượng chính.
+Goal: stop bad data **right at RAW**, before dbt runs. Great Expectations (GE) complements dbt tests, it does not
+replace them: dbt tests remain the main quality mechanism.
 
-## Vì sao cần, khi đã có 148 test dbt
+## Why it is needed when there are already 148 dbt tests
 
-dbt test kiểm tra **sau** khi model đã build. Nếu RAW có dòng xấu (khóa rỗng, trạng thái lạ, số lượng âm), dbt vẫn build và
-có thể cho số liệu sai mà không báo. GE kiểm tra RAW và, trong Dagster, **chặn không cho dbt chạy** khi RAW không đạt.
+dbt tests check **after** a model is built. If RAW has bad rows (empty keys, unknown statuses, negative quantities),
+dbt still builds and can produce wrong numbers without any warning. GE checks RAW and, in Dagster, **blocks dbt from
+running** when RAW fails.
 
 | | dbt test | Great Expectations |
 |---|---|---|
-| Kiểm tra ở đâu | staging, intermediate, marts | RAW |
-| Khi nào | sau khi build model | trước khi dbt chạy |
-| Nếu fail | model đã được build | dbt phía sau không chạy |
+| Where it checks | staging, intermediate, marts | RAW |
+| When | after the model is built | before dbt runs |
+| On failure | the model is already built | downstream dbt does not run |
 
-GE **không lặp lại** thứ dbt đã làm: không kiểm `unique` hay `relationships`, vì RAW append-only nên trùng là bình thường và
-staging đã dedup.
+GE **does not repeat** what dbt already does: no `unique` or `relationships` checks, because RAW is append-only, so
+duplicates are normal, and staging already dedups.
 
-## Cái đã làm
+## What was built
 
-Code: `src/retail_pulse/quality/raw_checks.py`. Kiểm 4 bảng nạp incremental (dễ bẩn nhất):
+Code: `src/retail_pulse/quality/raw_checks.py`. It checks the 4 incrementally loaded tables (the most likely to get dirty):
 
-| Bảng RAW | Phép kiểm |
+| RAW table | Checks |
 |---|---|
-| `sales_transaction` | có dòng; các cột khóa, `transaction_ts`, `updated_at` không rỗng; `status` thuộc `completed`, `cancelled`, `returned` |
-| `sales_transaction_item` | có dòng; khóa, `product_id`, `quantity`, `regular_price` không rỗng; `quantity >= 1`; `regular_price >= 0`; `coupon_amount >= 0` |
-| `product` | có dòng; `id`, `product_sku`, giá, giá vốn, `updated_at` không rỗng; `unit_price >= 0`; `unit_cost >= 0` |
-| `employee` | có dòng; `id`, `store_id`, `updated_at` không rỗng; `salary >= 0` |
+| `sales_transaction` | has rows; key columns, `transaction_ts`, `updated_at` not null; `status` in `completed`, `cancelled`, `returned` |
+| `sales_transaction_item` | has rows; key, `product_id`, `quantity`, `regular_price` not null; `quantity >= 1`; `regular_price >= 0`; `coupon_amount >= 0` |
+| `product` | has rows; `id`, `product_sku`, price, unit cost, `updated_at` not null; `unit_price >= 0`; `unit_cost >= 0` |
+| `employee` | has rows; `id`, `store_id`, `updated_at` not null; `salary >= 0` |
 
-- Đọc bằng user `DBT_TRANSFORMER` (role `TRANSFORMER`, chỉ `SELECT` trên RAW), dùng cùng biến môi trường với dbt
-  (`SNOWFLAKE_ACCOUNT`, `DBT_PRIVATE_KEY_PATH`).
-- **Trong Dagster:** `src/retail_pulse/orchestration/quality_checks.py` tạo mỗi bảng một **asset check** tên `great_expectations`
-  với `blocking=True`. Check fail thì các asset phía sau (dbt) trong cùng run không chạy.
-- **Chạy tay:** `make quality` (thoát mã 1 nếu có lỗi, in từng phép kiểm hỏng).
+- Reads as the `DBT_TRANSFORMER` user (role `TRANSFORMER`, only `SELECT` on RAW), using the same environment variables
+  as dbt (`SNOWFLAKE_ACCOUNT`, `DBT_PRIVATE_KEY_PATH`).
+- **In Dagster:** `src/retail_pulse/orchestration/quality_checks.py` creates one **asset check** per table, named
+  `great_expectations`, with `blocking=True`. If a check fails, the downstream assets (dbt) in the same run do not run.
+- **Manual run:** `make quality` (exits with code 1 on failure and prints each failed check).
 
-Đọc thêm: [Giới thiệu GX Core](https://docs.greatexpectations.io/docs/core/introduction/),
+Further reading: [GX Core introduction](https://docs.greatexpectations.io/docs/core/introduction/),
 [Dagster: asset checks](https://docs.dagster.io/guides/test/asset-checks).
 
-## Quyết định kỹ thuật
+## Technical decisions
 
-- **Không dùng datasource Snowflake của GE.** Nó cần `snowflake-sqlalchemy`, mà gói đó ép hạ cấp `sqlalchemy` từ 2.1 xuống
-  2.0 (dự án đã ghim `sqlalchemy>=2.1.2`). Thay vào đó đọc bảng về pandas rồi đưa cho GE: không đổi dependency nào.
-- **Giới hạn:** kéo cả bảng về RAM, ổn ở vài trăm nghìn dòng (hiện RAW khoảng 290 nghìn dòng). Lên hàng chục triệu dòng thì
-  phải đẩy phép kiểm vào Snowflake hoặc lấy mẫu. Giới hạn này đã được ghi chú trong code.
-- Chỉ chọn cột cần kiểm và ép kiểu số về `float` trong SQL, vì Snowflake trả `NUMBER` dạng `Decimal`.
+- **No GE Snowflake datasource.** It needs `snowflake-sqlalchemy`, which forces `sqlalchemy` down from 2.1 to 2.0
+  (the project pins `sqlalchemy>=2.1.2`). Instead, tables are read into pandas and passed to GE: no dependency changes.
+- **Limit:** whole tables are pulled into RAM. That is fine at a few hundred thousand rows (RAW is about 290 thousand
+  rows now). At tens of millions of rows, the checks must be pushed into Snowflake or run on a sample. This limit is
+  noted in the code.
+- Only the columns being checked are selected, and numeric types are cast to `float` in SQL, because Snowflake returns
+  `NUMBER` as `Decimal`.
 
-## Kiểm chứng
+## Verification
 
-- `make quality`: cả 4 bảng `OK` trên dữ liệu hiện tại.
-- `tests/test_raw_checks.py`: dữ liệu sạch thì đạt; dữ liệu có khóa rỗng và `status = 'refunded'` thì bị bắt. Chứng minh phép
-  kiểm thật sự phát hiện lỗi, không phải lúc nào cũng "xanh".
-- Chạy job `full_pipeline`: 4 check `great_expectations` đều `passed`, rồi dbt chạy xong, `RUN_SUCCESS`.
-- Khi dlt lỗi (Postgres tắt): 4 check và dbt đều bị bỏ qua vì phụ thuộc `retail_raw` đã fail.
+- `make quality`: all 4 tables `OK` on the current data.
+- `tests/test_raw_checks.py`: clean data passes; data with empty keys and `status = 'refunded'` is caught. This proves
+  the checks really detect errors and are not always "green".
+- Running the `full_pipeline` job: all 4 `great_expectations` checks `passed`, then dbt finished, `RUN_SUCCESS`.
+- When dlt fails (Postgres stopped): the 4 checks and dbt are all skipped, because their dependency `retail_raw` failed.
 
-**Chưa kiểm chứng:** chặn dbt khi chính check GE fail. Chưa cố ý làm RAW bẩn vì RAW là append-only và không sửa tay. Cơ chế
-`blocking=True` là tính năng của Dagster, nhưng cần một lần thử thật nếu muốn chắc.
+**Not yet verified:** blocking dbt when a GE check itself fails. RAW has not been dirtied on purpose, because RAW is
+append-only and is never edited by hand. `blocking=True` is a Dagster feature, but it needs one real test to be sure.
 
-## Thêm phép kiểm mới
+## Adding a new check
 
-Sửa dict `TABLES` trong `raw_checks.py`: thêm `gxe.Expect...` vào danh sách của bảng. Bảng mới thì thêm một mục (câu `SELECT`
-các cột cần kiểm và danh sách phép kiểm); asset check trong Dagster tự có theo `TABLES`.
+Edit the `TABLES` dict in `raw_checks.py`: add a `gxe.Expect...` to the table's list. For a new table, add an entry
+(a `SELECT` of the columns to check and a list of checks). The Dagster asset check follows `TABLES` automatically.
 
-Tiếp theo: [Phase 9 — CI/CD](09-dataops-ci.md).
+Next: [Phase 9: CI/CD](09-dataops-ci.md).

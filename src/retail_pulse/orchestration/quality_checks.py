@@ -1,4 +1,4 @@
-"""Asset check Great Expectations trên RAW. blocking=True: fail thì dbt phía sau không chạy."""
+"""Great Expectations asset checks on RAW. blocking=True: a failure stops downstream dbt."""
 
 from dagster import AssetCheckResult, AssetKey, asset_check
 

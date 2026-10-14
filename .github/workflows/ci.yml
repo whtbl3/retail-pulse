@@ -1,5 +1,5 @@
-# Mỗi pull request: lint Python, pytest với PostgreSQL, rồi slim CI cho dbt (chỉ build model đổi + model phụ thuộc vào nó).
-# Các bước dbt chỉ chạy khi PR đổi dbt/ (trừ file *.example), pyproject.toml, uv.lock hoặc chính file này.
+# Every pull request: lint Python, run pytest against PostgreSQL, then slim CI for dbt (builds only changed models and their dependents).
+# The dbt steps run only when the PR changes dbt/ (except *.example files), pyproject.toml, uv.lock or this file.
 name: CI
 
 on:
@@ -11,7 +11,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read # tải manifest từ lần chạy trước
+  actions: read # download the manifest from a previous run
 
 jobs:
   lint:
@@ -23,7 +23,7 @@ jobs:
       - run: uv run ruff check src tests .claude/hooks
       - run: uv run ruff format --check src tests .claude/hooks
 
-  # pytest với PostgreSQL thật (giống `make test`); không cần Snowflake
+  # pytest against a real PostgreSQL (same as `make test`); no Snowflake needed
   test:
     runs-on: ubuntu-latest
     services:
@@ -44,8 +44,8 @@ jobs:
       PG_USER: retail
       PG_PASSWORD: retail
       PG_DB: retail_oltp
-      # test_orchestration nạp dbt manifest. `dbt parse` không kết nối Snowflake nên dùng profile CI
-      # với giá trị giả, không cần secret.
+      # test_orchestration loads the dbt manifest. `dbt parse` does not connect to Snowflake, so it uses the CI profile
+      # with dummy values and no secrets.
       DBT_PROFILES_DIR: dbt/ci
       SNOWFLAKE_ACCOUNT: unused
       CI_PRIVATE_KEY_PATH: /dev/null
@@ -68,29 +68,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # cần lịch sử đầy đủ để so với nhánh gốc
+          fetch-depth: 0 # full history is needed to diff against the base branch
 
-      # PR chỉ đổi tài liệu thì bỏ qua các bước dbt. Job vẫn báo xanh (check bắt buộc không bị treo),
-      # chỉ các bước bên dưới có điều kiện `if` là bị bỏ qua.
-      - name: PR có đổi dbt không?
+      # A docs-only PR skips the dbt steps. The job still reports green (so the required check does not hang);
+      # only the steps below with an `if` condition are skipped.
+      - name: Does the PR change dbt?
         id: changes
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          # File mẫu (*.example) chỉ là tài liệu, không ảnh hưởng dbt
+          # Example files (*.example) are documentation only and do not affect dbt
           if git diff --name-only "origin/$BASE_REF...HEAD" | grep -vE '\.example$' \
               | grep -qE '^(dbt/|pyproject\.toml$|uv\.lock$|\.github/workflows/ci\.yml$)'; then
             echo "dbt=true" >> "$GITHUB_OUTPUT"
           else
             echo "dbt=false" >> "$GITHUB_OUTPUT"
-            echo "PR không đổi dbt, bỏ qua các bước dbt."
+            echo "PR does not change dbt, skipping the dbt steps."
           fi
 
       - uses: astral-sh/setup-uv@v5
         if: steps.changes.outputs.dbt == 'true'
       - run: uv sync --frozen
         if: steps.changes.outputs.dbt == 'true'
-      - name: Ghi private key ra file tạm
+      - name: Write the private key to a temp file
         if: steps.changes.outputs.dbt == 'true'
         env:
           CI_PRIVATE_KEY: ${{ secrets.CI_PRIVATE_KEY }}
@@ -101,7 +101,7 @@ jobs:
       - run: uv run dbt deps --project-dir dbt
         if: steps.changes.outputs.dbt == 'true'
 
-      - name: Tải manifest của bản thật (nếu đã có)
+      - name: Download the production manifest (if any)
         if: steps.changes.outputs.dbt == 'true'
         run: |
           RUN_ID=$(gh run list --workflow=manifest.yml --branch=main --status=success \
@@ -110,16 +110,16 @@ jobs:
             gh run download "$RUN_ID" --name prod-manifest --dir state
           fi
 
-      - name: dbt build (slim nếu có manifest, ngược lại build toàn bộ)
+      - name: dbt build (slim if a manifest exists, otherwise full build)
         if: steps.changes.outputs.dbt == 'true'
         run: |
           if [ -f state/manifest.json ]; then
             uv run dbt build --project-dir dbt --select state:modified+ --defer --state "$GITHUB_WORKSPACE/state"
           else
-            echo "Chưa có manifest của bản thật, build toàn bộ."
+            echo "No production manifest yet, running a full build."
             uv run dbt build --project-dir dbt
           fi
 
-      - name: Dọn schema của PR
+      - name: Drop the PR schemas
         if: always() && steps.changes.outputs.dbt == 'true'
         run: uv run dbt run-operation drop_ci_schemas --project-dir dbt

@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# ---------- Kiểu dùng chung ----------
+# ---------- Shared types ----------
 intpk = Annotated[int, mapped_column(BigInteger, Identity(always=True), primary_key=True)]
 money = Annotated[Decimal, mapped_column(Numeric(12, 2))]
 str50 = Annotated[str, mapped_column(String(50))]
@@ -41,14 +41,14 @@ class Base(DeclarativeBase):
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    # Trigger trong DB tự cập nhật -> báo cho ORM biết giá trị do server sinh
+    # A DB trigger maintains it -> tell the ORM the value is server-generated
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), server_onupdate=FetchedValue()
     )
 
 
 def str_enum(enum_cls: type[StrEnum]) -> Enum:
-    """Map StrEnum sang VARCHAR(20); CHECK constraint đã có sẵn trong DDL."""
+    """Map StrEnum to VARCHAR(20); the CHECK constraint already lives in the DDL."""
     return Enum(
         enum_cls,
         native_enum=False,
@@ -69,7 +69,7 @@ class PromotionType(StrEnum):
     FIXED_AMOUNT = "fixed_amount"
 
 
-# ---------- Bảng danh mục ----------
+# ---------- Reference tables ----------
 class Store(TimestampMixin, Base):
     __tablename__ = "store"
 
@@ -107,7 +107,7 @@ class PaymentMethod(TimestampMixin, Base):
     method: Mapped[str50] = mapped_column(unique=True)
 
 
-# ---------- Nhân viên ----------
+# ---------- Employees ----------
 class Employee(TimestampMixin, Base):
     __tablename__ = "employee"
 
@@ -125,7 +125,7 @@ class Employee(TimestampMixin, Base):
     store: Mapped[Store] = relationship(back_populates="employees")
 
 
-# ---------- Sản phẩm & khuyến mãi ----------
+# ---------- Products & promotions ----------
 class PromotionProduct(TimestampMixin, Base):
     __tablename__ = "promotion_product"
 
@@ -165,7 +165,7 @@ class Promotion(TimestampMixin, Base):
     )
 
 
-# ---------- Giao dịch ----------
+# ---------- Transactions ----------
 class SalesTransaction(TimestampMixin, Base):
     __tablename__ = "sales_transaction"
 
@@ -191,7 +191,7 @@ class SalesTransaction(TimestampMixin, Base):
 class SalesTransactionItem(TimestampMixin, Base):
     __tablename__ = "sales_transaction_item"
     __table_args__ = (
-        # FK kép: promotion phải được gán cho đúng sản phẩm (MATCH SIMPLE, bỏ qua khi NULL)
+        # Composite FK: the promotion must be assigned to this product (MATCH SIMPLE, NULL skips)
         ForeignKeyConstraint(
             ["product_id", "promotion_id"],
             ["retail.promotion_product.product_id", "retail.promotion_product.promotion_id"],

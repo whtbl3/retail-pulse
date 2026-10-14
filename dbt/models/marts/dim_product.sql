@@ -18,7 +18,7 @@ LEFT JOIN {{ ref('stg_brand') }} AS b ON p.brand_id = b.brand_id
 
 UNION ALL
 
--- Thành viên Unknown cho khóa chưa có trong dimension (dữ liệu đến trễ)
+-- Unknown member for keys not yet in the dimension (late-arriving data)
 SELECT
     -2                                  AS product_key,
     -2                                  AS product_id,

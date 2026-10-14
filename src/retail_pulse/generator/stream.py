@@ -1,17 +1,17 @@
-"""Mô phỏng thay đổi trên Postgres OLTP: giá của product, chuyển cửa hàng của employee, bán thêm.
+"""Simulate changes in Postgres OLTP: product prices, employee store transfers, extra sales.
 
-Mặc định chỉ UPDATE `unit_cost` (thường xuyên), `unit_price` (hiếm) của product có sẵn, và
-`store_id` của vài employee đang làm việc. `updated_at` do trigger trong DB tự cập nhật; lịch sử là
-việc của dlt + dbt. Với `--sales N`, mỗi cycle còn INSERT thêm N giao dịch bán hàng mới (cùng luật
-bán hàng với seed.py) vào khoảng thời gian đã trôi qua kể từ giao dịch gần nhất, trong giờ mở cửa.
+By default it only UPDATEs `unit_cost` (often) and `unit_price` (rarely) of existing products, and
+`store_id` of a few active employees. A DB trigger maintains `updated_at`; history is the job of
+dlt + dbt. With `--sales N`, each cycle also INSERTs N new sales transactions (same sales rules
+as seed.py) over the time elapsed since the latest transaction, within opening hours.
 
     SourceRepository.list_active_products()   -> list[ProductRecord]
     SourceRepository.list_active_employees()  -> list[EmployeeRecord]
-    ChangePolicy.plan_changes()               -> list[ProductChangeEvent]    (hàm thuần, không I/O)
-    ChangePolicy.plan_transfers()             -> list[EmployeeTransferEvent] (hàm thuần, không I/O)
-    SourceRepository.apply_changes()          -> StreamApplyResult           (một transaction DB)
-    SourceRepository.load_sales_context()     -> SeedContext                 (với --sales)
-    TransactionGenerator.generate_at()        -> TransactionBatch            (với --sales)
+    ChangePolicy.plan_changes()               -> list[ProductChangeEvent]    (pure function, no I/O)
+    ChangePolicy.plan_transfers()             -> list[EmployeeTransferEvent] (pure function, no I/O)
+    SourceRepository.apply_changes()          -> StreamApplyResult           (one DB transaction)
+    SourceRepository.load_sales_context()     -> SeedContext                 (with --sales)
+    TransactionGenerator.generate_at()        -> TransactionBatch            (with --sales)
 """
 
 from __future__ import annotations
@@ -52,13 +52,13 @@ from retail_pulse.oltp.models import (
 
 logger = logging.getLogger(__name__)
 
-COST_STEP = 100  # giá vốn làm tròn tới 100đ (giống seed.py)
-PRICE_STEP = 1000  # giá bán làm tròn tới 1.000đ
+COST_STEP = 100  # cost rounded to 100 VND (as in seed.py)
+PRICE_STEP = 1000  # price rounded to 1,000 VND
 
 REASON_COST = "supplier_cost_adjustment"
 REASON_PRICE = "price_revision"
 
-OPEN_HOUR, CLOSE_HOUR = 7, 22  # giờ mở cửa 7h–22h, giống seed.py
+OPEN_HOUR, CLOSE_HOUR = 7, 22  # opening hours 7:00-22:00, as in seed.py
 
 
 # ---------------------------------------------------------------- data contracts
@@ -67,35 +67,35 @@ class StreamConfig:
     max_products_per_tick: int = 5
     cost_change_pct_min: float = 0.01
     cost_change_pct_max: float = 0.05
-    price_change_probability: float = 0.10  # xác suất đổi thêm unit_price khi product được chọn
+    price_change_probability: float = 0.10  # chance a chosen product also changes unit_price
     price_change_pct_min: float = 0.01
     price_change_pct_max: float = 0.08
-    employees_per_tick: int = 1  # số employee chuyển cửa hàng mỗi cycle, 0 = tắt
-    sales_per_tick: int = 0  # số giao dịch bán hàng mới mỗi cycle, 0 = tắt
-    interval_seconds: float = 30  # chỉ dùng khi chạy loop
+    employees_per_tick: int = 1  # employees transferred per cycle, 0 = off
+    sales_per_tick: int = 0  # new sales transactions per cycle, 0 = off
+    interval_seconds: float = 30  # only used in loop mode
     random_seed: int | None = None
 
     def __post_init__(self) -> None:
         if self.max_products_per_tick < 1:
-            raise ValueError("max_products_per_tick phải >= 1")
+            raise ValueError("max_products_per_tick must be >= 1")
         for kind in ("cost", "price"):
             low = getattr(self, f"{kind}_change_pct_min")
             high = getattr(self, f"{kind}_change_pct_max")
             if not 0 < low <= high < 1:
-                raise ValueError(f"{kind} change pct phải thỏa 0 < min <= max < 1")
+                raise ValueError(f"{kind} change pct must satisfy 0 < min <= max < 1")
         if not 0 <= self.price_change_probability <= 1:
-            raise ValueError("price_change_probability phải trong [0, 1]")
+            raise ValueError("price_change_probability must be in [0, 1]")
         if self.employees_per_tick < 0:
-            raise ValueError("employees_per_tick phải >= 0")
+            raise ValueError("employees_per_tick must be >= 0")
         if self.sales_per_tick < 0:
-            raise ValueError("sales_per_tick phải >= 0")
+            raise ValueError("sales_per_tick must be >= 0")
         if self.interval_seconds <= 0:
-            raise ValueError("interval_seconds phải > 0")
+            raise ValueError("interval_seconds must be > 0")
 
 
 @dataclass(frozen=True)
 class ProductRecord:
-    """Trạng thái hiện tại của một product, đọc từ DB."""
+    """Current state of a product, read from the DB."""
 
     product_id: int
     sku: str
@@ -106,7 +106,7 @@ class ProductRecord:
 
 @dataclass(frozen=True)
 class EmployeeRecord:
-    """Employee đang làm việc (end_date IS NULL) và cửa hàng hiện tại."""
+    """An active employee (end_date IS NULL) and their current store."""
 
     employee_id: int
     store_id: int
@@ -114,7 +114,7 @@ class EmployeeRecord:
 
 @dataclass(frozen=True)
 class ProductChangeEvent:
-    """Một thay đổi cụ thể, gồm cả giá trị cũ và mới."""
+    """One concrete change, with both the old and new values."""
 
     product_id: int
     sku: str
@@ -154,7 +154,7 @@ class NoProductsError(RuntimeError):
 
 # ---------------------------------------------------------------- business rules
 class ChangePolicy:
-    """Toàn bộ luật nghiệp vụ. Không DB, không I/O."""
+    """All the business rules. No DB, no I/O."""
 
     def __init__(self, rnd: RandomSource) -> None:
         self.rnd = rnd
@@ -162,7 +162,7 @@ class ChangePolicy:
     def plan_changes(
         self, products: list[ProductRecord], config: StreamConfig
     ) -> list[ProductChangeEvent]:
-        # Sắp theo id để cùng dữ liệu + cùng seed thì chọn cùng product
+        # Sort by id so the same data + same seed picks the same products
         ordered = sorted(products, key=lambda p: p.product_id)
         k = min(config.max_products_per_tick, len(ordered))
         chosen = sorted(self.rnd.random.sample(ordered, k), key=lambda p: p.product_id)
@@ -171,7 +171,7 @@ class ChangePolicy:
     def plan_transfers(
         self, employees: list[EmployeeRecord], store_ids: list[int], config: StreamConfig
     ) -> list[EmployeeTransferEvent]:
-        """Chuyển vài employee sang một cửa hàng khác với cửa hàng hiện tại."""
+        """Move a few employees to a store other than their current one."""
         if len(store_ids) < 2:
             return []
         ordered = sorted(employees, key=lambda e: e.employee_id)
@@ -194,10 +194,10 @@ class ChangePolicy:
         if self.rnd.chance(cfg.price_change_probability):
             price_pct = self.rnd.signed_pct(cfg.price_change_pct_min, cfg.price_change_pct_max)
             new_price, reason = shift_by_pct(p.unit_price, price_pct, PRICE_STEP), REASON_PRICE
-            # Giá bán giảm thì không được thấp hơn giá vốn hiện tại
+            # A lower price must not drop below the current cost
             new_price = max(new_price, ceil_to_step(p.unit_cost, PRICE_STEP))
 
-        # Không để margin âm: giá vốn mới bị chặn bởi giá bán (đã xét giá bán mới)
+        # No negative margin: the new cost is capped by the price (new price included)
         new_cost = min(new_cost, new_price)
         return ProductChangeEvent(
             product_id=p.product_id,
@@ -211,9 +211,9 @@ class ChangePolicy:
 
 
 def shift_by_pct(value: Decimal, pct: float, step: int) -> Decimal:
-    """value * (1 + pct), làm tròn theo step; luôn dịch ít nhất 1 step và không âm."""
+    """value * (1 + pct), rounded to step; always moves at least 1 step and never negative."""
     new = round_to_step(value * (1 + Decimal(str(pct))), step)
-    if new == round_to_step(value, step):  # biến động quá nhỏ so với step (hàng rẻ)
+    if new == round_to_step(value, step):  # change too small relative to step (cheap item)
         new += step if pct > 0 else -step
     return max(new, Decimal(0))
 
@@ -224,7 +224,7 @@ def ceil_to_step(value: Decimal, step: int) -> Decimal:
 
 # ---------------------------------------------------------------- sales timeline
 def open_intervals(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
-    """Các khoảng giờ mở cửa (theo giờ địa phương) nằm trong (start, end]. Hàm thuần."""
+    """Opening-hour intervals (local time) within (start, end]. Pure function."""
     intervals: list[tuple[datetime, datetime]] = []
     day = start.astimezone(TZ).date()
     last_day = end.astimezone(TZ).date()
@@ -241,7 +241,7 @@ def open_intervals(start: datetime, end: datetime) -> list[tuple[datetime, datet
 def sample_timestamps(
     rng: Random, intervals: list[tuple[datetime, datetime]], n: int
 ) -> list[datetime]:
-    """n thời điểm (làm tròn giây) phân bố đều trên tổng thời gian của các khoảng, đã sắp xếp."""
+    """n sorted timestamps (rounded to seconds) spread evenly over the intervals' total time."""
     spans = [(lo, int((hi - lo).total_seconds())) for lo, hi in intervals]
     total = sum(seconds for _, seconds in spans)
     if total <= 0 or n <= 0:
@@ -259,7 +259,7 @@ def sample_timestamps(
 
 # ---------------------------------------------------------------- database
 class SourceRepository:
-    """Lớp duy nhất của stream nói chuyện với PostgreSQL."""
+    """The only class in stream that talks to PostgreSQL."""
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
@@ -285,7 +285,7 @@ class SourceRepository:
             return list(session.scalars(select(Store.id).order_by(Store.id)))
 
     def last_sales_activity(self) -> datetime | None:
-        """Mốc muộn nhất của giao dịch (transaction_ts hoặc updated_at); None nếu chưa có."""
+        """Latest transaction timestamp (transaction_ts or updated_at); None if there is none."""
         stmt = select(
             func.max(SalesTransaction.transaction_ts), func.max(SalesTransaction.updated_at)
         )
@@ -294,7 +294,7 @@ class SourceRepository:
         return max(stamps) if stamps else None
 
     def load_sales_context(self) -> SeedContext:
-        """Trạng thái hiện tại của danh mục, dưới dạng SeedContext để dùng lại luật bán hàng."""
+        """Current reference data as a SeedContext, to reuse the sales rules."""
         with self.session_factory() as session:
             store_ids = list(session.scalars(select(Store.id).order_by(Store.id)))
             employees: dict[int, list[tuple[int, date, date | None]]] = defaultdict(list)
@@ -328,7 +328,7 @@ class SourceRepository:
         )
 
     def insert_sales(self, batch: TransactionBatch) -> int:
-        """Ghi một lô giao dịch (một transaction DB), trả về số giao dịch đã ghi."""
+        """Write one batch of transactions (one DB transaction); return how many were written."""
         if not batch.transactions:
             return 0
         return (
@@ -340,10 +340,11 @@ class SourceRepository:
     def apply_changes(
         self, events: list[ProductChangeEvent], transfers: list[EmployeeTransferEvent]
     ) -> StreamApplyResult:
-        """Mọi event của một tick nằm trong một transaction: thành công hết hoặc rollback hết.
+        """All events of a tick share one transaction: all succeed or all roll back.
 
-        Chỉ set unit_cost/unit_price và store_id; updated_at do trigger lo. Điều kiện trên giá trị
-        cũ là optimistic check: nếu có tiến trình khác vừa sửa dòng đó thì hủy cả tick.
+        Only sets unit_cost/unit_price and store_id; the trigger handles updated_at. The condition
+        on the old value is an optimistic check: if another process just changed the row, the
+        whole tick is cancelled.
         """
         if not events and not transfers:
             return StreamApplyResult(0, 0)
@@ -361,8 +362,8 @@ class SourceRepository:
                 )
                 if session.execute(stmt).scalar_one_or_none() is None:
                     raise RuntimeError(
-                        f"Product {e.product_id} ({e.sku}) đã bị thay đổi bởi tiến trình khác; "
-                        "rollback cả tick"
+                        f"Product {e.product_id} ({e.sku}) was changed by another process; "
+                        "rolling back the tick"
                     )
             for t in transfers:
                 stmt = (
@@ -373,15 +374,15 @@ class SourceRepository:
                 )
                 if session.execute(stmt).scalar_one_or_none() is None:
                     raise RuntimeError(
-                        f"Employee {t.employee_id} đã bị thay đổi bởi tiến trình khác; "
-                        "rollback cả tick"
+                        f"Employee {t.employee_id} was changed by another process; "
+                        "rolling back the tick"
                     )
         return StreamApplyResult(len(events), len(transfers))
 
 
 # ---------------------------------------------------------------- runner
 class StreamRunner:
-    """Điều phối, không chứa luật."""
+    """Orchestration only, no rules."""
 
     def __init__(
         self,
@@ -414,9 +415,9 @@ class StreamRunner:
         self.cycle += 1
         products = self.repo.list_active_products()
         if not products:
-            raise NoProductsError("Bảng retail.product đang trống. Chạy `make seed` trước.")
+            raise NoProductsError("Table retail.product is empty. Run `make seed` first.")
 
-        # Bán trước khi đổi giá: giao dịch mới dùng giá hiện tại, giá mới có hiệu lực từ lúc này
+        # Sell before repricing: new transactions use current prices, new prices apply from now on
         sold = self._sell()
         events = self.policy.plan_changes(products, self.config)
         transfers = self.policy.plan_transfers(
@@ -464,7 +465,7 @@ class StreamRunner:
         return tick
 
     def _sell(self) -> int:
-        """INSERT giao dịch mới vào khoảng giờ mở cửa đã trôi qua kể từ giao dịch gần nhất."""
+        """INSERT new transactions into the opening hours elapsed since the latest transaction."""
         if self.config.sales_per_tick == 0 or self.sales is None:
             return 0
         now = self.clock()
@@ -476,7 +477,7 @@ class StreamRunner:
         )
         if not stamps:
             logger.info(
-                "[cycle %d] chưa có giờ mở cửa nào kể từ giao dịch gần nhất (%s), bỏ qua bán hàng",
+                "[cycle %d] no opening hours since the latest transaction (%s), skipping sales",
                 self.cycle,
                 last.astimezone(TZ).strftime("%Y-%m-%d %H:%M"),
             )
@@ -493,13 +494,13 @@ class StreamRunner:
         return sold
 
     def run_forever(self) -> None:
-        """Lặp đến khi Ctrl+C. Mỗi tick đã commit thì giữ nguyên, tick dở dang thì rollback."""
+        """Loop until Ctrl+C. Committed ticks are kept; an unfinished tick rolls back."""
         try:
             while True:
                 self.run_once()
                 time.sleep(self.config.interval_seconds)
         except KeyboardInterrupt:
-            logger.info("Dừng stream sau %d cycle.", self.cycle)
+            logger.info("Stopped stream after %d cycles.", self.cycle)
 
 
 # ---------------------------------------------------------------- entrypoint
@@ -507,27 +508,27 @@ def parse_args(argv: list[str] | None = None) -> tuple[StreamConfig, bool]:
     d = StreamConfig()
     parser = argparse.ArgumentParser(
         description=(
-            "Mô phỏng đổi giá vốn (thường xuyên), giá bán (hiếm), chuyển cửa hàng của employee "
-            "và (tùy chọn) bán thêm hàng. "
-            "Mặc định chạy 1 cycle rồi thoát."
+            "Simulate cost changes (often), price changes (rarely), employee store transfers "
+            "and (optionally) extra sales. "
+            "Runs 1 cycle and exits by default."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--products", type=int, default=d.max_products_per_tick, help="Số product đổi mỗi cycle"
+        "--products", type=int, default=d.max_products_per_tick, help="Products changed per cycle"
     )
     parser.add_argument("--cost-pct-min", type=float, default=d.cost_change_pct_min)
     parser.add_argument(
         "--cost-pct-max",
         type=float,
         default=d.cost_change_pct_max,
-        help="Biên độ đổi giá vốn (tăng hoặc giảm), dạng tỉ lệ: 0.05 = 5%%",
+        help="Cost change range (up or down) as a ratio: 0.05 = 5%%",
     )
     parser.add_argument(
         "--price-probability",
         type=float,
         default=d.price_change_probability,
-        help="Xác suất một product được chọn đổi thêm giá bán",
+        help="Chance that a chosen product also gets a price change",
     )
     parser.add_argument("--price-pct-min", type=float, default=d.price_change_pct_min)
     parser.add_argument("--price-pct-max", type=float, default=d.price_change_pct_max)
@@ -535,22 +536,22 @@ def parse_args(argv: list[str] | None = None) -> tuple[StreamConfig, bool]:
         "--transfers",
         type=int,
         default=d.employees_per_tick,
-        help="Số employee chuyển cửa hàng mỗi cycle, 0 = tắt",
+        help="Employees transferred per cycle, 0 = off",
     )
     parser.add_argument(
         "--sales",
         type=int,
         default=d.sales_per_tick,
         help=(
-            "Số giao dịch bán hàng mới INSERT mỗi cycle (0 = tắt), rải đều trong giờ mở cửa "
-            "kể từ giao dịch gần nhất đến bây giờ"
+            "New sales transactions INSERTed per cycle (0 = off), spread over opening hours "
+            "from the latest transaction until now"
         ),
     )
-    parser.add_argument("--loop", action="store_true", help="Chạy liên tục đến khi Ctrl+C")
+    parser.add_argument("--loop", action="store_true", help="Run continuously until Ctrl+C")
     parser.add_argument(
-        "--interval", type=float, default=d.interval_seconds, help="Số giây giữa 2 cycle (--loop)"
+        "--interval", type=float, default=d.interval_seconds, help="Seconds between cycles (--loop)"
     )
-    parser.add_argument("--seed", type=int, default=None, help="Random seed để tái lập kết quả")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     args = parser.parse_args(argv)
     try:
         config = StreamConfig(

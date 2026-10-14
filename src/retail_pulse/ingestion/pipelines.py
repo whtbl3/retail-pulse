@@ -9,15 +9,15 @@ from dlt.sources.sql_database import sql_database
 
 from retail_pulse.oltp.db import engine
 
-# Bảng có updated_at -> incremental append (không merge, rẻ hơn trên Snowflake).
-# Mỗi lần một dòng đổi là một dòng mới trong RAW; dbt dựng SCD2 từ các dòng đó.
+# Tables with updated_at -> incremental append (no merge, cheaper on Snowflake).
+# Every change to a row becomes a new row in RAW; dbt builds SCD2 from those rows.
 APPEND: dict[str, list[str]] = {
     "sales_transaction": ["transaction_id"],
     "sales_transaction_item": ["transaction_id", "line_number"],
-    "product": ["id"],  # nguồn cho dim_product SCD2
-    "employee": ["id"],  # nguồn cho dim_employee SCD2
+    "product": ["id"],  # source of dim_product SCD2
+    "employee": ["id"],  # source of dim_employee SCD2
 }
-# Bảng nhỏ -> ghi đè toàn bộ mỗi lần chạy
+# Small tables -> fully replaced on every run
 FULL_REFRESH: list[str] = [
     "store",
     "category",
@@ -29,7 +29,7 @@ FULL_REFRESH: list[str] = [
 
 
 def retail_pipeline(progress: str | None = None) -> dlt.Pipeline:
-    """Một nơi duy nhất định nghĩa pipeline, dùng chung cho CLI và Dagster"""
+    """The single place that defines the pipeline, shared by the CLI and Dagster"""
     return dlt.pipeline(
         pipeline_name="retail_oltp_to_snowflake",
         destination="snowflake",
@@ -40,16 +40,16 @@ def retail_pipeline(progress: str | None = None) -> dlt.Pipeline:
 
 def retail_source():
     source = sql_database(
-        credentials=engine,  # dùng lại engine của oltp/db.py
+        credentials=engine,  # reuse the engine from oltp/db.py
         schema="retail",
         table_names=[*APPEND, *FULL_REFRESH],
         backend="sqlalchemy",
-        reflection_level="full",  # giữ đúng precision/scale của NUMERIC(12,2)
-        defer_table_reflect=True,  # chỉ đọc cấu trúc bảng lúc chạy, để import không cần Postgres
+        reflection_level="full",  # keep the exact precision/scale of NUMERIC(12,2)
+        defer_table_reflect=True,  # reflect tables only at run time, so importing needs no Postgres
     )
     for table, pk in APPEND.items():
         source.resources[table].apply_hints(
-            primary_key=pk,  # chỉ để dlt bỏ dòng trùng ở mốc con trỏ, không merge
+            primary_key=pk,  # only lets dlt drop duplicates at the cursor boundary, no merge
             write_disposition="append",
             incremental=dlt.sources.incremental("updated_at"),
         )
@@ -59,7 +59,7 @@ def retail_source():
 
 
 def main() -> None:
-    argparse.ArgumentParser(description="Load Postgres OLTP vào Snowflake RAW").parse_args()
+    argparse.ArgumentParser(description="Load Postgres OLTP into Snowflake RAW").parse_args()
 
     pipeline = retail_pipeline(progress="log")
     info = pipeline.run(retail_source())

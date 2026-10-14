@@ -6,7 +6,7 @@ dist/
 wheels/
 *.egg-info
 
-# claude: chỉ bỏ qua cấu hình riêng từng máy; CLAUDE.md và .claude/ dùng chung được commit
+# claude: ignore only per-machine settings; the shared CLAUDE.md and .claude/ are committed
 .claude/settings.local.json
 .claude/worktrees/
 CLAUDE.local.md
@@ -16,7 +16,7 @@ CLAUDE.local.md
 
 # configuration datasource
 .env
-# .dlt chứa credential thật; chỉ file mẫu được commit
+# .dlt holds real credentials; only the example file is committed
 .dlt/*
 !.dlt/secrets.toml.example
 *.p8
@@ -30,7 +30,7 @@ logs/
 
 # dbt
 profiles.yml
-# profile của CI chỉ dùng biến môi trường, không có bí mật nên được commit
+# the CI profile uses only environment variables and holds no secrets, so it is committed
 !dbt/ci/profiles.yml
 .user.yml
 dbt/target/

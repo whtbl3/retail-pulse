@@ -17,7 +17,7 @@ FROM {{ ref('stg_promotion') }}
 
 UNION ALL
 
--- Dòng hàng không có khuyến mãi (promotion_id rỗng ở fact)
+-- Line items without a promotion (null promotion_id in the fact)
 SELECT
     -1             AS promotion_key,
     -1             AS promotion_id,
@@ -29,7 +29,7 @@ SELECT
 
 UNION ALL
 
--- Thành viên Unknown cho khóa chưa có trong dimension (dữ liệu đến trễ)
+-- Unknown member for keys not yet in the dimension (late-arriving data)
 SELECT
     -2        AS promotion_key,
     -2        AS promotion_id,

@@ -4,92 +4,92 @@ DAYS ?= 365
 ROWS ?= 100000
 SALES ?= 300
 DLT_PIPELINE ?= retail_oltp_to_snowflake
-# dbt chạy từ dbt/, nạp .env trước vì profiles.yml dùng env_var(); dùng dbt trong .venv (qua uv run)
+# dbt runs from dbt/ and loads .env first because profiles.yml uses env_var(); dbt comes from .venv (via uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
 .PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster clean
 
-help: ## Liệt kê các lệnh
+help: ## List the commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-install: ## Cài dependency theo uv.lock
+install: ## Install dependencies from uv.lock
 	uv sync
 
-up: ## Bật Postgres và chờ healthcheck
+up: ## Start Postgres and wait for the healthcheck
 	$(COMPOSE) up -d --wait postgres
 
-ingest: up ## Load Postgres sang Snowflake RAW (lần đầu load hết, sau đó incremental)
+ingest: up ## Load Postgres into Snowflake RAW (full load the first time, incremental after)
 	uv run ingest
 
-snowflake-init-dry: ## In các câu lệnh khởi tạo Snowflake, không kết nối
+snowflake-init-dry: ## Print the Snowflake setup statements without connecting
 	uv run snowflake-init --dry-run
 
-snowflake-init: ## Khởi tạo Snowflake (cần SNOWFLAKE_ACCOUNT, SNOWFLAKE_ADMIN_USER, SNOWFLAKE_ADMIN_PASSWORD)
+snowflake-init: ## Set up Snowflake (needs SNOWFLAKE_ACCOUNT, SNOWFLAKE_ADMIN_USER, SNOWFLAKE_ADMIN_PASSWORD)
 	uv run snowflake-init
 
-down: ## Tắt container (giữ dữ liệu)
+down: ## Stop the containers (keeps data)
 	$(COMPOSE) down
 
-db-reset: clean-raw ## Xóa volume Postgres + RAW Snowflake + state dlt, tạo lại DB
+db-reset: clean-raw ## Delete the Postgres volume + Snowflake RAW + dlt state, recreate the DB
 	$(COMPOSE) down -v
 	$(COMPOSE) up -d --wait postgres
 
-psql: ## Mở psql vào DB
+psql: ## Open psql on the DB
 	$(COMPOSE) exec postgres psql -U retail -d retail_oltp
 
-seed: up clean-raw ## Seed dữ liệu lịch sử (DAYS=365); xóa RAW Snowflake trước
+seed: up clean-raw ## Seed historical data (DAYS=365); deletes Snowflake RAW first
 	uv run seed --days $(DAYS) --transactions $(ROWS)
 
-reseed: up clean-raw ## Xóa dữ liệu cũ (Postgres + RAW Snowflake) rồi seed lại
+reseed: up clean-raw ## Delete old data (Postgres + Snowflake RAW) and seed again
 	uv run seed --days $(DAYS) --transactions $(ROWS) --reset
 
-stream: up ## Đổi giá vốn/giá bán của vài product (1 cycle)
+stream: up ## Change cost/price of a few products (1 cycle)
 	uv run stream
 
-stream-sales: up ## Như stream, thêm SALES (300) giao dịch bán mới rải trong giờ mở cửa kể từ giao dịch gần nhất
+stream-sales: up ## Like stream, plus SALES (300) new sales spread over opening hours since the latest sale
 	uv run stream --sales $(SALES)
 
-stream-loop: up ## Chạy stream liên tục đến khi Ctrl+C
+stream-loop: up ## Run stream continuously until Ctrl+C
 	uv run stream --loop
 
-test: up ## Chạy pytest (tạo DB tạm <PG_DB>_test, xóa sau khi xong)
+test: up ## Run pytest (creates a temporary <PG_DB>_test DB, drops it afterwards)
 	uv run pytest
 
-lint: ## Ruff: tự sửa lỗi và format
+lint: ## Ruff: autofix and format
 	uv run ruff check --fix src tests .claude/hooks && uv run ruff format src tests .claude/hooks
 
-check: ## Cổng chất lượng trước khi mở PR: ruff (không sửa file) rồi pytest; giống CI
+check: ## Quality gate before opening a PR: ruff (no fixes) then pytest; same as CI
 	uv run ruff check src tests .claude/hooks
 	uv run ruff format --check src tests .claude/hooks
 	$(MAKE) test
 
-clean-raw: ## Xoá RAW trên Snowflake + state dlt, không hỏi xác nhận
+clean-raw: ## Delete Snowflake RAW + dlt state without confirmation
 	uv run python -m retail_pulse.ingestion.clean --yes
 
-quality: ## Great Expectations: kiểm tra chất lượng RAW (thoát mã 1 nếu có lỗi)
+quality: ## Great Expectations: check RAW data quality (exit code 1 on failure)
 	uv run python -m retail_pulse.quality.raw_checks
 
-dbt-deps: ## Cài package dbt (dbt_utils) vào dbt/dbt_packages
+dbt-deps: ## Install dbt packages (dbt_utils) into dbt/dbt_packages
 	$(DBT) deps
 
-dbt-parse: ## Sinh dbt/target/manifest.json (Dagster cần file này; `make dagster` tự sinh, validate/chạy không dev thì không)
+dbt-parse: ## Generate dbt/target/manifest.json (Dagster needs it; `make dagster` builds it, non-dev validate/runs do not)
 	$(DBT) parse
 
-dbt-build: ## dbt build toàn dự án (model + test), cần RAW đã có dữ liệu
+dbt-build: ## dbt build the whole project (models + tests); needs data in RAW
 	$(DBT) build
 
-dbt-test: ## Chỉ chạy test dbt
+dbt-test: ## Run dbt tests only
 	$(DBT) test
 
-dbt-full-refresh: ## Dựng lại fct_sales từ đầu (sửa dòng khóa -2); không đụng RAW
+dbt-full-refresh: ## Rebuild fct_sales from scratch (fixes -2 key rows); leaves RAW alone
 	$(DBT) build -s fct_sales --full-refresh
 
-dbt-docs: ## Sinh và mở dbt docs (lineage) ở http://localhost:8080
+dbt-docs: ## Generate and serve dbt docs (lineage) at http://localhost:8080
 	$(DBT) docs generate && $(DBT) docs serve
 
-dagster: ## Mở Dagster (http://localhost:3000); lịch sử chạy mất khi tắt nếu chưa đặt DAGSTER_HOME
+dagster: ## Open Dagster (http://localhost:3000); run history is lost on exit unless DAGSTER_HOME is set
 	uv run dagster dev
 
-clean: ## Xóa file sinh ra (cache, dbt/target, dbt/logs); không đụng .env, .venv, key, dbt_packages
+clean: ## Delete generated files (caches, dbt/target, dbt/logs); keeps .env, .venv, keys, dbt_packages
 	rm -rf .pytest_cache .ruff_cache logs dbt/target dbt/logs dbt/package-lock.concurrent-update-lock
 	find . -name __pycache__ -type d -not -path './.venv/*' -prune -exec rm -rf {} +
