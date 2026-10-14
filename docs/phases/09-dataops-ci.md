@@ -1,193 +1,195 @@
-# Phase 9 — CI/CD: GitHub Actions và slim CI cho dbt
+# Phase 9: CI/CD with GitHub Actions and slim CI for dbt
 
-Mục tiêu: mỗi pull request (PR) tự kiểm tra thay đổi dbt mà **không đụng dữ liệu thật** và **không build lại
-toàn bộ**. Khớp khối "GitHub CI" trong [README gốc](../../README.md).
+Goal: every pull request (PR) checks dbt changes automatically, **without touching real data** and **without
+rebuilding everything**. This matches the "GitHub CI" block in the [root README](../../README.md).
 
-## Vì sao cần
+## Why it is needed
 
-Bạn sửa `dim_payment_method` rồi push thẳng lên `main`. Lúc 23:00 Dagster chạy, model sai logic nhưng không báo
-đỏ, chỉ cho ra số sai. Sáng hôm sau dashboard lệch. CI chặn lỗi đó **trước khi** nó vào `main`.
+You edit `dim_payment_method` and push straight to `main`. At 23:00 Dagster runs. The model has a logic bug but nothing
+turns red, it just produces wrong numbers. The next morning the dashboard is off. CI stops that bug **before** it reaches `main`.
 
-- **CI:** máy tự kiểm tra mỗi thay đổi trước khi nhập vào `main` (như bếp thử món trước khi lên thực đơn).
-- **CD:** tự đưa bản đã kiểm tra lên nơi chạy thật. Dự án này **mới có CI**; deploy là `git pull` rồi khởi động
-  lại Dagster bằng tay.
+- **CI:** a machine checks every change before it is merged into `main` (like a kitchen testing a dish before it goes on the menu).
+- **CD:** automatically ships the checked version to where it runs for real. This project **only has CI** so far; deploying
+  means `git pull` and restarting Dagster by hand.
 
-> **Đọc thêm:** [Continuous Integration (Martin Fowler)](https://martinfowler.com/articles/continuousIntegration.html), bài
-> kinh điển giải thích CI là gì và vì sao mọi người nên nhập code vào nhánh chính thường xuyên.
+> **Further reading:** [Continuous Integration (Martin Fowler)](https://martinfowler.com/articles/continuousIntegration.html),
+> the classic article on what CI is and why everyone should merge code into the main branch often.
 
-Dữ liệu khác code thường ở ba điểm, và thiết kế bên dưới trả lời từng điểm:
-- Lỗi chỉ làm số sai chứ không làm chương trình chết, nên CI phải chạy cả `dbt test`.
-- Test cần dữ liệu thật nhưng không được phá nó, nên có database CI riêng, chỉ đọc bản thật.
-- Build toàn bộ mỗi PR tốn credit Snowflake, nên dùng slim CI.
+Data differs from ordinary code in three ways, and the design below answers each one:
+- A bug only makes numbers wrong, it does not crash the program, so CI must also run `dbt test`.
+- Tests need real data but must not damage it, so there is a separate CI database that only reads production.
+- Building everything on every PR burns Snowflake credits, so we use slim CI.
 
-## Slim CI chạy thế nào
+## How slim CI works
 
-dbt so `manifest.json` của PR với manifest của bản thật để biết model nào đổi, rồi chỉ build phần đó:
+dbt compares the PR's `manifest.json` with the production manifest to find which models changed, then builds only those:
 
 ```bash
-dbt build --select state:modified+ --defer --state <thư mục chứa manifest của bản thật>
+dbt build --select state:modified+ --defer --state <folder with the production manifest>
 ```
 
-> **Đọc thêm (tài liệu dbt):** [Best practices for workflows](https://docs.getdbt.com/best-practices/best-practice-workflows)
-> (mục chạy chỉ model đã đổi, tức slim CI), [Node selector methods](https://docs.getdbt.com/reference/node-selection/methods)
-> (`state:modified` hoạt động thế nào) và [Defer](https://docs.getdbt.com/reference/node-selection/defer)
-> (`--defer` và `--state`).
+> **Further reading (dbt docs):** [Best practices for workflows](https://docs.getdbt.com/best-practices/best-practice-workflows)
+> (the section on running only changed models, that is slim CI), [Node selector methods](https://docs.getdbt.com/reference/node-selection/methods)
+> (how `state:modified` works) and [Defer](https://docs.getdbt.com/reference/node-selection/defer)
+> (`--defer` and `--state`).
 
-Ví dụ PR số 7 sửa `dim_payment_method`:
-- **Được build:** `dim_payment_method`, `fct_sales` (dùng dimension này) và 30 test của chúng. Ghi vào
-  `RETAIL_PULSE_CI.PR_7_MARTS`, không đụng bản thật.
+Example: PR number 7 edits `dim_payment_method`:
+- **Built:** `dim_payment_method`, `fct_sales` (which uses this dimension) and their 30 tests. Written to
+  `RETAIL_PULSE_CI.PR_7_MARTS`, without touching production.
 
-  | | Máy bạn | CI của PR 7 |
+  | | Your machine | CI for PR 7 |
   |---|---|---|
   | `fct_sales` | `RETAIL_PULSE.MARTS.fct_sales` | `RETAIL_PULSE_CI.PR_7_MARTS.fct_sales` |
 
-- **Không build:** 6 dimension còn lại, toàn bộ staging và intermediate. Nhờ `--defer`, `ref()` tới chúng trỏ về
-  bản thật (`RETAIL_PULSE.marts.dim_product`...). Vì vậy user CI phải có quyền **đọc** schema thật.
-- **Dọn dẹp:** bước cuối xóa schema `PR_7_*`. PR số 8 chạy song song dùng `PR_8_*`, hai PR không đè nhau.
-  Tên schema theo PR do macro `generate_schema_name` quyết định; xem [Custom schemas](https://docs.getdbt.com/docs/build/custom-schemas).
+- **Not built:** the other 6 dimensions, and all of staging and intermediate. Thanks to `--defer`, `ref()` to them points
+  to production (`RETAIL_PULSE.marts.dim_product`...). That is why the CI user needs **read** access to the production schemas.
+- **Cleanup:** the last step drops the `PR_7_*` schemas. PR number 8 running in parallel uses `PR_8_*`, so the two PRs
+  do not overwrite each other. The per-PR schema name is set by the `generate_schema_name` macro; see
+  [Custom schemas](https://docs.getdbt.com/docs/build/custom-schemas).
 
-Danh sách trên lấy từ `dbt ls --select state:modified+` chạy ở máy với đúng thay đổi của PR thử; log chi tiết của
-GitHub cần đăng nhập nên không đọc được từ ngoài.
+The list above comes from running `dbt ls --select state:modified+` locally with the exact changes of the test PR.
+GitHub's detailed logs require login, so they cannot be read from outside.
 
-## Thiết lập (một lần, đúng thứ tự)
+## Setup (once, in this order)
 
-**1. Chuẩn bị tài khoản quản trị.** Cần user `ACCOUNTADMIN` và ba biến trong `.env`: `SNOWFLAKE_ACCOUNT`,
+**1. Prepare the admin account.** You need an `ACCOUNTADMIN` user and three variables in `.env`: `SNOWFLAKE_ACCOUNT`,
 `SNOWFLAKE_ADMIN_USER`, `SNOWFLAKE_ADMIN_PASSWORD`.
-*Vì sao:* chỉ `ACCOUNTADMIN` tạo được database, role và user. Thiếu biến thì lệnh dừng, chưa tạo gì trên Snowflake.
+*Why:* only `ACCOUNTADMIN` can create databases, roles and users. If a variable is missing, the command stops and creates nothing on Snowflake.
 
-**2. Tạo môi trường CI trên Snowflake.**
+**2. Create the CI environment on Snowflake.**
 ```bash
-make snowflake-init-dry   # xem trước, không kết nối
-make snowflake-init       # chạy thật; chạy lại nhiều lần vẫn an toàn
+make snowflake-init-dry   # preview, does not connect
+make snowflake-init       # real run; safe to run many times
 ```
-Tạo ra: database `RETAIL_PULSE_CI` (nơi CI ghi), warehouse `RETAIL_CI_WH` với resource monitor `RETAIL_CI_RM`
-(trần 2 credit/tháng), role `CI_RUNNER` (ghi trong database CI, chỉ đọc bản thật), user `GITHUB_CI` (đăng nhập
-bằng key pair, file `.snowflake/github_ci.p8`).
-*Vì sao:* tách riêng để CI lỗi không thể đè dữ liệu thật hay đốt hết credit.
-*Kiểm tra:* `DESC USER GITHUB_CI;` có `RSA_PUBLIC_KEY_FP` dạng `SHA256:...`.
-> **Đọc thêm (tài liệu Snowflake):** [Key-pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth)
-> (đăng nhập bằng key thay mật khẩu) và [Resource monitors](https://docs.snowflake.com/en/user-guide/resource-monitors)
-> (đặt trần credit, tự dừng warehouse).
+This creates: database `RETAIL_PULSE_CI` (where CI writes), warehouse `RETAIL_CI_WH` with resource monitor `RETAIL_CI_RM`
+(cap of 2 credits/month), role `CI_RUNNER` (writes in the CI database, only reads production), user `GITHUB_CI` (key
+pair login, file `.snowflake/github_ci.p8`).
+*Why:* kept separate so a CI bug cannot overwrite real data or burn all credits.
+*Check:* `DESC USER GITHUB_CI;` shows `RSA_PUBLIC_KEY_FP` in the form `SHA256:...`.
+> **Further reading (Snowflake docs):** [Key-pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth)
+> (log in with a key instead of a password) and [Resource monitors](https://docs.snowflake.com/en/user-guide/resource-monitors)
+> (set a credit cap, auto suspend the warehouse).
 
-**3. Thêm hai secret vào GitHub.** Settings, Secrets and variables, Actions, New **repository** secret:
-`SNOWFLAKE_ACCOUNT` (giống `.env`) và `CI_PRIVATE_KEY` (toàn bộ nội dung `.snowflake/github_ci.p8`, gồm dòng
-BEGIN/END).
-*Vì sao:* workflow đọc hai secret này để đăng nhập. Phải là repository secret vì workflow không khai `environment:`;
-đặt vào Environment thì giá trị rỗng. Không dán key vào chat hay commit.
-> **Đọc thêm:** [Using secrets in GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+**3. Add two secrets to GitHub.** Settings, Secrets and variables, Actions, New **repository** secret:
+`SNOWFLAKE_ACCOUNT` (same as in `.env`) and `CI_PRIVATE_KEY` (the full content of `.snowflake/github_ci.p8`, including
+the BEGIN/END lines).
+*Why:* the workflow reads these two secrets to log in. They must be repository secrets because the workflow does not
+declare `environment:`; secrets stored in an Environment come through empty. Never paste the key into a chat or a commit.
+> **Further reading:** [Using secrets in GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
 
-**4. Chạy workflow `Prod manifest`.** Tab Actions, bấm `manifest.yml` ở cột trái, **Run workflow**, chọn `main`.
-*Vì sao:* tạo manifest bản thật (artifact `prod-manifest`) để PR so sánh. Thiếu thì PR đầu tiên build toàn bộ.
-Xanh ở bước này chưa chứng minh đăng nhập đúng, vì `dbt parse` không kết nối Snowflake.
+**4. Run the `Prod manifest` workflow.** Actions tab, click `manifest.yml` in the left column, **Run workflow**, choose `main`.
+*Why:* it creates the production manifest (artifact `prod-manifest`) for PRs to compare against. Without it, the first PR builds everything.
+A green run here does not prove the login works, because `dbt parse` does not connect to Snowflake.
 
-**5. Mở một PR thử.** Tạo nhánh, thêm một dòng chú thích vào một model, mở PR; `lint` và `dbt-slim-ci` phải xanh.
-Xong thì đóng PR và xóa nhánh, không merge.
-*Vì sao:* đây là lần đầu CI thật sự đăng nhập Snowflake; thử trước để lỗi cấu hình không rơi vào PR thật.
+**5. Open a test PR.** Create a branch, add a comment line to a model, open a PR; `lint` and `dbt-slim-ci` must be green.
+Then close the PR and delete the branch, without merging.
+*Why:* this is the first time CI really logs in to Snowflake. Testing first keeps config errors out of real PRs.
 
-**6. Bật bảo vệ `main`** theo bảng dưới.
-*Vì sao để sau cùng:* ô chọn check bắt buộc chỉ liệt kê check đã chạy, và rule sẽ chặn việc đẩy workflow lên `main`.
+**6. Turn on `main` protection** as in the table below.
+*Why last:* the required check picker only lists checks that have already run, and the rule would block pushing the workflow to `main`.
 
-## Cài đặt GitHub
+## GitHub settings
 
-| Ở đâu | Làm gì | Vì sao |
+| Where | What to do | Why |
 |---|---|---|
-| Settings, General, Pull Requests | Chỉ bật **Squash merging** (mặc định lấy tiêu đề PR); bật **Automatically delete head branches** | Mỗi PR thành một commit gọn; merge xong nhánh tự xóa |
-| Settings, Actions, General | **Require approval for all external contributors** | Repo public, ai cũng fork và mở PR được; người lạ không tự chạy workflow |
-| Cùng chỗ | Workflow permissions: **Read repository contents**; để trống "Allow GitHub Actions to create and approve pull requests" | Workflow chỉ đọc; bot không tự duyệt PR |
-| Settings, Rules, Rulesets | Tạo ruleset `protect-main`: **Active**, áp cho default branch, **bypass để trống** | Chủ repo cũng phải đi qua PR |
-| Trong ruleset | **Restrict deletions** và **Block force pushes** | Không xóa nhầm hoặc ghi đè lịch sử `main` |
-| Trong ruleset | **Require a pull request before merging** (approvals = 0; làm nhóm thì 1) | Không thì vẫn push thẳng được và CI vô dụng |
-| Trong ruleset | **Require status checks to pass**: `lint`, `test`, `dbt-slim-ci` | CI đỏ thì không merge được. `test` chỉ hiện trong ô chọn sau khi đã chạy một lần |
+| Settings, General, Pull Requests | Enable only **Squash merging** (default to the PR title); enable **Automatically delete head branches** | Each PR becomes one clean commit; the branch is deleted after merge |
+| Settings, Actions, General | **Require approval for all external contributors** | The repo is public, anyone can fork and open a PR; strangers cannot run workflows on their own |
+| Same place | Workflow permissions: **Read repository contents**; leave "Allow GitHub Actions to create and approve pull requests" unchecked | Workflows only read; bots cannot approve PRs |
+| Settings, Rules, Rulesets | Create ruleset `protect-main`: **Active**, targets the default branch, **bypass list empty** | The repo owner must also go through a PR |
+| In the ruleset | **Restrict deletions** and **Block force pushes** | No accidental deletion or rewrite of `main` history |
+| In the ruleset | **Require a pull request before merging** (approvals = 0; 1 for a team) | Otherwise direct pushes still work and CI is useless |
+| In the ruleset | **Require status checks to pass**: `lint`, `test`, `dbt-slim-ci` | A red CI blocks the merge. `test` only shows in the picker after it has run once |
 
-Secret không được truyền cho PR từ fork (chủ ý): nếu truyền, người ngoài chỉ cần sửa workflow trong fork để in key
-ra log.
+Secrets are not passed to PRs from forks (on purpose): if they were, an outsider could just edit the workflow in a fork
+to print the key to the log.
 
-**PR chỉ sửa tài liệu có phải chạy dbt không?** Không cần, và `ci.yml` đã xử lý: hai check `lint` và `dbt-slim-ci` luôn
-**xuất hiện** trên mọi PR, nhưng một bước đầu của job dbt kiểm tra PR có đổi `dbt/` (trừ file mẫu `*.example`), `pyproject.toml`,
-`uv.lock` hay chính `ci.yml` không; nếu không thì các bước dbt bị bỏ qua và job báo xanh sau vài giây.
-*Vì sao không lọc `paths` ở cấp workflow:* workflow bị bỏ qua thì check **ở trạng thái Pending và chặn merge**
+**Does a docs-only PR have to run dbt?** No, and `ci.yml` already handles it: the `lint` and `dbt-slim-ci` checks always
+**appear** on every PR, but an early step of the dbt job checks whether the PR changes `dbt/` (except the `*.example`
+templates), `pyproject.toml`, `uv.lock` or `ci.yml` itself. If not, the dbt steps are skipped and the job turns green in a few seconds.
+*Why not filter `paths` at the workflow level:* when a workflow is skipped, its check **stays Pending and blocks the merge**
 ([GitHub: handling skipped but required checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)),
-còn job bị bỏ qua bởi điều kiện thì báo Success. *Nếu bỏ qua cách này:* PR tài liệu hoặc PR chỉ đổi Python sẽ treo mãi, hoặc
-mọi PR đều tốn thời gian chạy dbt dù không đụng dbt.
+while a job skipped by a condition reports Success. *Without this approach:* docs PRs or Python-only PRs would hang
+forever, or every PR would spend time running dbt even when it does not touch dbt.
 
-> **Đọc thêm (tài liệu GitHub):** [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
-> và [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
-> (từng rule ở bảng trên), [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
-> (vì sao phải cẩn thận với PR từ fork) và [Pull request merges](https://docs.github.com/en/pull-requests/reference/pull-request-merges)
+> **Further reading (GitHub docs):** [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
+> and [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+> (each rule in the table above), [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
+> (why PRs from forks need care) and [Pull request merges](https://docs.github.com/en/pull-requests/reference/pull-request-merges)
 > (squash merge).
 
-## Cổng chất lượng ở máy bạn
+## Local quality gates
 
-CI chỉ báo lỗi sau khi bạn đã push. Kiểm tra ở máy trước thì sửa nhanh hơn và không tốn một vòng CI.
+CI only reports errors after you push. Checking locally first is faster to fix and saves a CI round.
 
-**`make check`** chạy đúng những gì CI chạy cho Python: `ruff check`, `ruff format --check` (không sửa file) rồi
-`make test`. Chạy trước khi mở PR.
-*Khác `make lint`:* `lint` tự sửa file, `check` chỉ kiểm tra và báo lỗi, giống CI.
-*Lưu ý:* `tests/test_orchestration.py` đọc `dbt/target/manifest.json`, nên chạy `make dbt-parse` một lần trước.
+**`make check`** runs exactly what CI runs for Python: `ruff check`, `ruff format --check` (does not change files), then
+`make test`. Run it before opening a PR.
+*Unlike `make lint`:* `lint` fixes files, `check` only checks and reports, like CI.
+*Note:* `tests/test_orchestration.py` reads `dbt/target/manifest.json`, so run `make dbt-parse` once first.
 
-**pre-commit** chạy trước mỗi `git commit`, chỉ trên file đã stage: ruff, xóa khoảng trắng cuối dòng, kiểm tra
-YAML/TOML, chặn file lớn hơn 1 MB và chặn private key. Cài một lần cho mỗi bản clone:
+**pre-commit** runs before each `git commit`, only on staged files: ruff, trailing whitespace removal, YAML/TOML
+checks, blocking files larger than 1 MB and blocking private keys. Install it once per clone:
 ```bash
 uv run pre-commit install
 ```
-*Nếu bỏ qua:* commit vẫn được, lỗi chỉ lộ ra khi CI chạy. *Không nên* chạy `pre-commit run --all-files` lúc này: nó
-sửa khoảng trắng ở khoảng 40 file dbt, làm slim CI build lại gần hết model. Để việc đó cho một PR dọn dẹp riêng.
+*If skipped:* commits still work, and errors only show up when CI runs. *Do not* run `pre-commit run --all-files` for now: it
+fixes whitespace in about 40 dbt files, which makes slim CI rebuild almost every model. Leave that to a separate cleanup PR.
 
-**Job `test` trong CI** dựng PostgreSQL 16 làm service, chạy `dbt deps` và `dbt parse` (không kết nối Snowflake, nên dùng
-profile CI với giá trị giả, không cần secret), rồi `pytest`. Trên máy bạn test cần Postgres bị skip nếu quên `make up`;
-trong CI chúng luôn chạy.
+**The `test` job in CI** starts PostgreSQL 16 as a service, runs `dbt deps` and `dbt parse` (no Snowflake connection, so
+it uses the CI profile with dummy values and needs no secrets), then `pytest`. Locally, tests that need Postgres are
+skipped if you forget `make up`; in CI they always run.
 
-> **Đọc thêm:** [pre-commit](https://pre-commit.com/) và
-> [Service containers trong GitHub Actions](https://docs.github.com/en/actions/use-cases-and-examples/using-containerized-services/creating-postgresql-service-containers).
+> **Further reading:** [pre-commit](https://pre-commit.com/) and
+> [Service containers in GitHub Actions](https://docs.github.com/en/actions/use-cases-and-examples/using-containerized-services/creating-postgresql-service-containers).
 
-## Làm việc hằng ngày (trunk-based)
+## Daily work (trunk-based)
 
-Một nhánh chính `main`; mỗi việc một nhánh ngắn (vài giờ đến vài ngày), PR nhỏ, CI xanh thì merge. Không dùng
-GitFlow (`develop`, `release`): nặng nề, chỉ hợp khi phát hành theo chu kỳ.
+One main branch, `main`. Each task gets a short-lived branch (a few hours to a few days), PRs stay small, and they merge
+when CI is green. No GitFlow (`develop`, `release`): it is heavy and only fits release cycles.
 
-> **Đọc thêm:** [Trunk Based Development](https://trunkbaseddevelopment.com/) và riêng phần
-> [Short-lived feature branches](https://trunkbaseddevelopment.com/short-lived-feature-branches/); với người đã quen
-> GitHub thì xem [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow).
+> **Further reading:** [Trunk Based Development](https://trunkbaseddevelopment.com/) and especially
+> [Short-lived feature branches](https://trunkbaseddevelopment.com/short-lived-feature-branches/); if you already know
+> GitHub, see [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow).
 
 ```bash
 git switch main && git pull
-git switch -c fix/ten-ngan
-# sửa, rồi:
+git switch -c fix/short-name
+# make changes, then:
 git add -A && git commit -m "..."
-git push -u origin fix/ten-ngan     # git in link mở PR
+git push -u origin fix/short-name   # git prints the link to open a PR
 ```
-Mở PR (GitHub tự điền mẫu có checklist), đợi các check xanh, bấm **Squash and merge**. Sau đó `git switch main && git pull && git fetch --prune`,
-và `git branch -D <nhánh>` (squash làm Git tưởng nhánh chưa merge).
+Open the PR (GitHub fills in the template with its checklist), wait for the checks to turn green, click **Squash and merge**.
+Then run `git switch main && git pull && git fetch --prune`, and `git branch -D <branch>` (squash makes Git think the branch is not merged).
 
-## Các file
+## Files
 
-| File | Việc |
+| File | Job |
 |---|---|
-| `.github/workflows/ci.yml` | Mỗi PR: `ruff`; `pytest` với PostgreSQL; slim CI dbt + dọn schema (chỉ khi PR đổi dbt, xem trên) |
-| `.github/pull_request_template.md` | Mẫu mô tả PR, có checklist Definition of Done (spec §16) |
-| `.pre-commit-config.yaml` | Kiểm tra trước mỗi commit ở máy bạn (ruff, khoảng trắng, YAML, private key) |
-| `.github/workflows/manifest.yml` | Mỗi lần merge đổi `dbt/**`: `dbt parse --target prod`, lưu artifact `prod-manifest` |
-| `dbt/ci/profiles.yml` | Profile CI (target `ci`, `prod`); chỉ dùng `env_var()` nên được commit |
-| `dbt/macros/generate_schema_name.sql` | Target `ci` thì thêm tiền tố `PR_<số>_` |
-| `dbt/macros/drop_ci_schemas.sql` | Xóa schema của PR; từ chối chạy nếu target không phải `ci` |
-| `infras/snowflake/init.sql` | Phần CI ở cuối file, chạy cùng `make snowflake-init` |
+| `.github/workflows/ci.yml` | Every PR: `ruff`; `pytest` with PostgreSQL; dbt slim CI + schema cleanup (only when the PR changes dbt, see above) |
+| `.github/pull_request_template.md` | PR description template, with the Definition of Done checklist (spec §16) |
+| `.pre-commit-config.yaml` | Checks before each local commit (ruff, whitespace, YAML, private keys) |
+| `.github/workflows/manifest.yml` | Every merge that changes `dbt/**`: `dbt parse --target prod`, saves the `prod-manifest` artifact |
+| `dbt/ci/profiles.yml` | CI profile (targets `ci`, `prod`); uses only `env_var()`, so it is committed |
+| `dbt/macros/generate_schema_name.sql` | For target `ci`, adds the `PR_<number>_` prefix |
+| `dbt/macros/drop_ci_schemas.sql` | Drops the PR's schemas; refuses to run if the target is not `ci` |
+| `infras/snowflake/init.sql` | The CI part is at the end of the file and runs with `make snowflake-init` |
 
-## Lưu ý
+## Notes
 
-- **Manifest lệch bản thật:** manifest sinh khi merge vào `main`, còn dữ liệu thật do Dagster build. Merge xong mà
-  chưa chạy `full_pipeline` thì PR kế tiếp `--defer` đọc bảng thật còn cũ. Dự án một người chấp nhận được.
-- **`fct_sales` incremental:** schema CI mới chưa có bảng nên lần build đầu chạy đầy đủ (~270 nghìn dòng, nhẹ).
-- **Chưa ghim SHA cho action.** Mỗi lần chạy GitHub báo `checkout@v4` và `setup-uv@v5` còn dùng Node.js 20, và
-  `ubuntu-latest` chuyển sang Ubuntu 26 từ 19/10/2026. Không làm CI đỏ; nếu hỏng sau ngày đó, thử `ubuntu-24.04`.
-- **Chưa có `sqlfluff`:** templater `dbt` (cấu hình trong `pyproject.toml`) phải kết nối Snowflake mới chạy được.
-  Đổi sang templater `jinja` thì chạy được không cần kết nối, nhưng lần thử đầu báo 209 lỗi ở 19/20 model
-  (chủ yếu thụt lề và khoảng trắng). Cần chọn quy ước SQL rồi sửa trong một PR riêng.
+- **Manifest out of sync with production:** the manifest is created on merge into `main`, while production data is built
+  by Dagster. If `full_pipeline` has not run since a merge, the next PR's `--defer` reads stale production tables.
+  Acceptable for a one-person project.
+- **`fct_sales` is incremental:** a new CI schema has no table yet, so the first build is a full run (~270 thousand rows, light).
+- **Actions are not pinned by SHA.** On every run GitHub warns that `checkout@v4` and `setup-uv@v5` still use Node.js 20,
+  and that `ubuntu-latest` moves to Ubuntu 26 from 19/10/2026. This does not turn CI red; if it breaks after that date, try `ubuntu-24.04`.
+- **No `sqlfluff` yet:** the `dbt` templater (configured in `pyproject.toml`) needs a Snowflake connection to run.
+  The `jinja` templater runs without a connection, but the first try reported 209 errors in 19/20 models
+  (mostly indentation and whitespace). A SQL style must be chosen first, then fixed in a separate PR.
 
-## Đã chạy thật
+## Real runs
 
-`make snowflake-init`, `Prod manifest` và PR thử đều chạy xanh trên GitHub Actions và Snowflake (dbt build 17 giây,
-dọn schema 5 giây). Hai lỗi gặp và đã sửa:
-- `runner.temp` không dùng được ở `env` của job nên GitHub báo "Invalid workflow file". Sửa bằng `$RUNNER_TEMP`
-  trong step ghi key và đặt biến qua `$GITHUB_ENV`. Chạy `actionlint` trước khi push workflow.
-- `.gitignore` chặn mọi `profiles.yml` nên `dbt/ci/profiles.yml` suýt không lên GitHub. Thêm
+`make snowflake-init`, `Prod manifest` and the test PR all ran green on GitHub Actions and Snowflake (dbt build 17 seconds,
+schema cleanup 5 seconds). Two errors were hit and fixed:
+- `runner.temp` cannot be used in a job's `env`, so GitHub reported "Invalid workflow file". Fixed by using `$RUNNER_TEMP`
+  in the step that writes the key and setting the variable through `$GITHUB_ENV`. Run `actionlint` before pushing a workflow.
+- `.gitignore` blocked every `profiles.yml`, so `dbt/ci/profiles.yml` almost did not reach GitHub. Added
   `!dbt/ci/profiles.yml`.

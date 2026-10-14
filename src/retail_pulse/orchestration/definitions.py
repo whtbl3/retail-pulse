@@ -1,4 +1,4 @@
-"""Dagster: điều phối dlt (Postgres -> Snowflake RAW) rồi dbt (staging -> marts)."""
+"""Dagster: orchestrates dlt (Postgres -> Snowflake RAW), then dbt (staging -> marts)."""
 
 from dagster import Definitions
 from dagster_dbt import DbtCliResource
@@ -20,6 +20,6 @@ defs = Definitions(
     schedules=[daily_pipeline_schedule],
     resources={
         "dlt_res": DagsterDltResource(),
-        "dbt": DbtCliResource(project_dir=dbt_project),  # profiles_dir lấy từ dbt_project
+        "dbt": DbtCliResource(project_dir=dbt_project),  # profiles_dir comes from dbt_project
     },
 )

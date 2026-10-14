@@ -16,12 +16,12 @@ with items as (
         t.employee_id,
         t.payment_method_id,
         t.transaction_ts,
-        -- Mốc "mới" của một dòng: lấy giá trị lớn hơn của dòng chi tiết và hóa đơn
+        -- A row's "freshness" mark: the later of the line item and the invoice
         greatest(i.updated_at, t.updated_at) as source_updated_at
     from {{ ref('stg_sales_transaction_item') }} i
     join {{ ref('stg_sales_transaction') }} t using (transaction_id)
     {% if is_incremental() %}
-    -- >= để không bỏ sót dòng đến muộn có đúng updated_at ở biên; unique_key chặn trùng
+    -- >= so late rows with exactly the boundary updated_at are not missed; unique_key prevents duplicates
     where greatest(i.updated_at, t.updated_at) >= (select max(source_updated_at) from {{ this }})
     {% endif %}
 ),
@@ -29,7 +29,7 @@ with items as (
 joined as (
     select
         it.*,
-        -- Không khớp thì left join ra rỗng, COALESCE ở select cuối gán -2
+        -- No match gives null from the left join; COALESCE in the final select assigns -2
         s.store_key,
         pm.payment_method_key,
         e.employee_key,
@@ -45,7 +45,7 @@ joined as (
         on it.payment_method_id = pm.payment_method_id
     left join {{ ref('dim_promotion') }} pr
         on it.promotion_id = pr.promotion_id
-    -- Join khoảng nửa mở bằng transaction_ts gốc (UTC): mỗi giao dịch khớp đúng một phiên bản
+    -- Half-open range join on the original transaction_ts (UTC): each transaction matches exactly one version
     left join {{ ref('dim_product') }} p
         on  it.product_id = p.product_id
         and it.transaction_ts >= p.valid_from
@@ -63,7 +63,7 @@ measures as (
         case promotion_type
             when 'percentage'   then quantity * regular_price * promotion_amount / 100
             when 'fixed_amount' then quantity * least(promotion_amount, regular_price)
-            else 0                                   -- -1, -2 và mọi giá trị khác: không giảm
+            else 0                                   -- -1, -2 and anything else: no discount
         end as discount_amount
     from joined
 ),
@@ -71,13 +71,13 @@ measures as (
 local_ts as (
     select
         *,
-        -- Chỉ khóa ngày/giờ dùng giờ địa phương; transaction_ts gốc giữ nguyên
+        -- Only the date/time keys use local time; the original transaction_ts is unchanged
         convert_timezone('{{ var("local_tz") }}', transaction_ts) as local_transaction_ts
     from measures
 ),
 
--- Khóa ngày/giờ tính từ giờ địa phương rồi tra lại dim_date, dim_time như các dimension khác,
--- nên ngày/giờ không có trong dimension rơi về -2 (không làm fail test relationships)
+-- Date/time keys are computed from local time, then looked up in dim_date and dim_time like other dimensions,
+-- so a date/time missing from the dimension falls back to -2 (instead of failing the relationships test)
 timed as (
     select
         l.*,
@@ -98,8 +98,8 @@ select
     coalesce(employee_key, -2)                                        as employee_key,
     coalesce(payment_method_key, -2)                                  as payment_method_key,
     case
-        when promotion_id is null then -1                             -- không có khuyến mãi
-        else coalesce(promotion_key, -2)                              -- có mã nhưng dimension chưa có
+        when promotion_id is null then -1                             -- no promotion
+        else coalesce(promotion_key, -2)                              -- has an ID, but it is not in the dimension yet
     end                                                               as promotion_key,
     transaction_id,
     line_number,

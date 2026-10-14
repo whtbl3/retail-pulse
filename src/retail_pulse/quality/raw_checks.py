@@ -1,8 +1,8 @@
-"""Great Expectations: kiểm tra chất lượng RAW trước khi dbt chạy.
+"""Great Expectations: check RAW data quality before dbt runs.
 
-Chỉ phủ phần dbt test chưa phủ: dbt test kiểm staging/marts, còn đây chặn dữ liệu xấu ngay ở RAW.
-Đọc bằng user dbt (role TRANSFORMER, chỉ SELECT trên RAW). Dữ liệu kéo về pandas, không cần
-snowflake-sqlalchemy (cài nó sẽ hạ cấp sqlalchemy của dự án).
+Covers only what dbt tests do not: dbt tests check staging/marts, this stops bad data at RAW.
+Reads as the dbt user (role TRANSFORMER, SELECT only on RAW). Data is pulled into pandas, so no
+snowflake-sqlalchemy is needed (installing it would downgrade the project's sqlalchemy).
 """
 
 import os
@@ -13,8 +13,8 @@ import great_expectations.expectations as gxe
 import pandas as pd
 import snowflake.connector
 
-# ponytail: kéo cả bảng về RAM (vài trăm nghìn dòng thì ổn); lên hàng chục triệu dòng thì đổi sang
-# datasource SQL của GX (đẩy phép kiểm vào Snowflake) hoặc lấy mẫu.
+# ponytail: pulls whole tables into RAM (fine for a few hundred thousand rows); at tens of millions
+# switch to a GX SQL datasource (push the checks down to Snowflake) or sample.
 TABLES: dict[str, tuple[str, list]] = {
     "sales_transaction": (
         "transaction_id, store_id, employee_id, payment_method_id, transaction_ts, "
@@ -103,7 +103,7 @@ def _read(conn, table: str, columns: str) -> pd.DataFrame:
 
 
 def validate(df: pd.DataFrame, table: str, expectations: list) -> list[str]:
-    """Trả về danh sách phép kiểm thất bại (rỗng nếu đạt hết)."""
+    """Return the list of failed checks (empty if all pass)."""
     context = gx.get_context(mode="ephemeral")
     os.environ.setdefault("TQDM_DISABLE", "1")
     batch_def = (
@@ -118,14 +118,14 @@ def validate(df: pd.DataFrame, table: str, expectations: list) -> list[str]:
     result = definition.run(batch_parameters={"dataframe": df})
     return [
         f"{table}: {r.expectation_config.type} {r.expectation_config.kwargs.get('column', '')} "
-        f"{r.result.get('unexpected_count', '')} dòng sai".strip()
+        f"{r.result.get('unexpected_count', '')} bad rows".strip()
         for r in result.results
         if not r.success
     ]
 
 
 def run_checks(tables: list[str] | None = None) -> dict[str, list[str]]:
-    """Chạy kiểm tra cho các bảng RAW, trả về {bảng: [lỗi]}; rỗng nghĩa là đạt."""
+    """Run the checks on the RAW tables and return {table: [errors]}; empty means pass."""
     conn = _connect()
     try:
         return {

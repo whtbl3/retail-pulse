@@ -3,9 +3,9 @@ version: 2
 models:
   - name: int_product_scd2
     description: >
-      Dimension sản phẩm SCD Type 2. Theo dõi thay đổi của unit_cost, unit_price,
-      category_id, brand_id. product_sku và product_name là Type 1 (giá trị mới nhất).
-      Phiên bản đầu bắt đầu từ 1900-01-01, phiên bản hiện hành có valid_to = 9999-12-31.
+      Product dimension, SCD Type 2. Tracks changes to unit_cost, unit_price,
+      category_id and brand_id. product_sku and product_name are Type 1 (latest value).
+      The first version starts at 1900-01-01; the current version has valid_to = 9999-12-31.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -17,19 +17,19 @@ models:
             expression: "(valid_to = '9999-12-31'::timestamp) = is_current"
     columns:
       - name: product_id
-        description: Mã sản phẩm (khóa tự nhiên).
+        description: Product ID (natural key).
         data_tests:
           - not_null
       - name: valid_from
-        description: Thời điểm phiên bản bắt đầu có hiệu lực.
+        description: When the version takes effect.
         data_tests:
           - not_null
       - name: valid_to
-        description: Thời điểm hết hiệu lực (loại trừ). 9999-12-31 nếu là phiên bản hiện hành.
+        description: When the version stops being valid (exclusive). 9999-12-31 for the current version.
         data_tests:
           - not_null
       - name: is_current
-        description: TRUE nếu là phiên bản hiện hành.
+        description: TRUE for the current version.
         data_tests:
           - not_null
       - name: unit_price
@@ -41,10 +41,10 @@ models:
 
   - name: int_employee_scd2
     description: >
-      Dimension nhân viên SCD Type 2, một dòng mỗi phiên bản. Chỉ store_id được theo dõi lịch sử;
-      employee_name (gộp first_name, last_name), salary, address, start_date, end_date là Type 1
-      (giá trị mới nhất). Không có date_of_birth, phone_number. Phiên bản đầu bắt đầu từ 1900-01-01,
-      phiên bản hiện hành có valid_to = 9999-12-31.
+      Employee dimension, SCD Type 2, one row per version. Only store_id has tracked history;
+      employee_name (first_name and last_name combined), salary, address, start_date and end_date are Type 1
+      (latest value). date_of_birth and phone_number are excluded. The first version starts at 1900-01-01;
+      the current version has valid_to = 9999-12-31.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -57,22 +57,22 @@ models:
       
     columns:
       - name: employee_id
-        description: Mã nhân viên (khóa tự nhiên), lặp lại qua các phiên bản.
+        description: Employee ID (natural key); repeats across versions.
         data_tests:
           - not_null
       - name: valid_from
-        description: Thời điểm phiên bản bắt đầu có hiệu lực (bao gồm).
+        description: When the version takes effect (inclusive).
         data_tests:
           - not_null
       - name: valid_to
-        description: Thời điểm hết hiệu lực (loại trừ). 9999-12-31 nếu là phiên bản hiện hành.
+        description: When the version stops being valid (exclusive). 9999-12-31 for the current version.
         data_tests:
           - not_null
       - name: store_id
-        description: Cửa hàng nhân viên làm việc trong phiên bản này.
+        description: Store the employee works at in this version.
         data_tests:
           - not_null
       - name: is_current
-        description: TRUE nếu là phiên bản hiện hành.
+        description: TRUE for the current version.
         data_tests:
           - not_null
