@@ -6,8 +6,10 @@ dist/
 wheels/
 *.egg-info
 
-# claude
-.claude
+# claude: chỉ bỏ qua cấu hình riêng từng máy; CLAUDE.md và .claude/ dùng chung được commit
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
 
 # Virtual environments
 .venv
@@ -23,7 +25,6 @@ wheels/
 .ruff_cache
 .pytest_cache
 .cache
-.claude/settings.local.json
 
 logs/
 

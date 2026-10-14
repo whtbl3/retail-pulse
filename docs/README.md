@@ -35,6 +35,12 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | Operational data modeling (OLTP: conceptual, logical, physical) | [design/operational-data-modeling.md](design/operational-data-modeling.md) | `infras/postgres/init/01_schema.sql`, `src/retail_pulse/oltp/` | — |
 | Analytical data modeling (Kimball: process, grain, dimension, fact) | [design/analytical-data-modeling.md](design/analytical-data-modeling.md) | dbt (phase 5) | — |
 
+## Quy trình làm việc
+
+| Chủ đề | Tài liệu |
+|---|---|
+| Claude Code: `CLAUDE.md`, quyền và hook trong `.claude/` | [claude-code.md](claude-code.md) |
+
 ## Chạy nhanh
 
 Đến Postgres (chỉ cần Docker, chưa cần Snowflake):
