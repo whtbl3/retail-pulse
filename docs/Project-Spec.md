@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | Active |
 | Version | 1.2 |
-| Last updated | 2026-10-11 |
+| Last updated | 2026-10-14 |
 
 ## 1. Document Purpose
 
@@ -510,6 +510,8 @@ Existing implementation locations:
 - `docs/README.md`: documentation index and phase roadmap;
 - `docs/phases/`: per-phase run and verification guides;
 - `docs/design/`: component design and implementation notes;
+- `CLAUDE.md` and `.claude/` (settings, hooks, rules): Claude Code instructions and guardrails, explained in
+  `docs/claude-code.md`;
 - `Makefile`: local developer commands; and
 - `pyproject.toml`: package metadata, commands, dependencies, and tool configuration.
 
