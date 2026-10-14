@@ -64,7 +64,7 @@ version, and the main pipeline behaviors are covered by focused tests and docume
 | Orchestration | Dagster | Integrates dlt and dbt assets |
 | BI | Preset | Reads analytics-ready mart models |
 | Data quality on RAW | Great Expectations | Runs before dbt as blocking Dagster asset checks (phase 8) |
-| CI | GitHub Actions | Lint and dbt slim CI on a separate Snowflake database (phase 9) |
+| CI | GitHub Actions | Lint, pytest against PostgreSQL, and dbt slim CI on a separate Snowflake database (phase 9) |
 
 Replacing a finalized technology is out of scope unless the project owner explicitly requests it.
 

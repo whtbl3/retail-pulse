@@ -1,0 +1,31 @@
+# Chạy trước mỗi `git commit` trên file đã stage. Cài một lần: `uv run pre-commit install`.
+# Chạy tay trên toàn repo: `uv run pre-commit run --all-files`.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^assets/
+      - id: end-of-file-fixer
+        exclude: ^assets/
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      # Chặn commit nhầm private key (Snowflake key pair dạng .p8)
+      - id: detect-private-key
+
+  # Ruff chạy qua uv để dùng đúng phiên bản trong uv.lock, giống CI và hook của Claude
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
