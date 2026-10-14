@@ -7,7 +7,7 @@ DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt chạy từ dbt/, nạp .env trước vì profiles.yml dùng env_var(); dùng dbt trong .venv (qua uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster clean
+.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster clean
 
 help: ## Liệt kê các lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -51,12 +51,17 @@ stream-sales: up ## Như stream, thêm SALES (300) giao dịch bán mới rải 
 
 stream-loop: up ## Chạy stream liên tục đến khi Ctrl+C
 	uv run stream --loop
-	
+
 test: up ## Chạy pytest (tạo DB tạm <PG_DB>_test, xóa sau khi xong)
 	uv run pytest
 
-lint: ## Ruff
-	uv run ruff check --fix src && uv run ruff format src
+lint: ## Ruff: tự sửa lỗi và format
+	uv run ruff check --fix src tests .claude/hooks && uv run ruff format src tests .claude/hooks
+
+check: ## Cổng chất lượng trước khi mở PR: ruff (không sửa file) rồi pytest; giống CI
+	uv run ruff check src tests .claude/hooks
+	uv run ruff format --check src tests .claude/hooks
+	$(MAKE) test
 
 clean-raw: ## Xoá RAW trên Snowflake + state dlt, không hỏi xác nhận
 	uv run python -m retail_pulse.ingestion.clean --yes

@@ -6,6 +6,7 @@
       "Bash(make up)",
       "Bash(make test)",
       "Bash(make lint)",
+      "Bash(make check)",
       "Bash(make dbt-parse)",
       "Bash(uv run pytest *)",
       "Bash(uv run ruff *)"

@@ -1,4 +1,4 @@
-# Mỗi pull request: lint Python, rồi slim CI cho dbt (chỉ build model đổi + model phụ thuộc vào nó).
+# Mỗi pull request: lint Python, pytest với PostgreSQL, rồi slim CI cho dbt (chỉ build model đổi + model phụ thuộc vào nó).
 # Các bước dbt chỉ chạy khi PR đổi dbt/ (trừ file *.example), pyproject.toml, uv.lock hoặc chính file này.
 name: CI
 
@@ -20,8 +20,43 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
+      - run: uv run ruff check src tests .claude/hooks
+      - run: uv run ruff format --check src tests .claude/hooks
+
+  # pytest với PostgreSQL thật (giống `make test`); không cần Snowflake
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: retail
+          POSTGRES_PASSWORD: retail
+          POSTGRES_DB: retail_oltp
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U retail -d retail_oltp"
+          --health-interval 3s
+          --health-retries 10
+    env:
+      PG_HOST: localhost
+      PG_PORT: "5432"
+      PG_USER: retail
+      PG_PASSWORD: retail
+      PG_DB: retail_oltp
+      # test_orchestration nạp dbt manifest. `dbt parse` không kết nối Snowflake nên dùng profile CI
+      # với giá trị giả, không cần secret.
+      DBT_PROFILES_DIR: dbt/ci
+      SNOWFLAKE_ACCOUNT: unused
+      CI_PRIVATE_KEY_PATH: /dev/null
+      CI_SCHEMA: unused
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - run: uv run dbt deps --project-dir dbt
+      - run: uv run dbt parse --project-dir dbt
+      - run: uv run pytest
 
   dbt-slim-ci:
     runs-on: ubuntu-latest

@@ -165,7 +165,7 @@ Hình dưới là cùng pipeline nhìn theo công cụ: dữ liệu đi từ tr�
 
 ![Kiến trúc công cụ RetailPulse](./assets/diagrams/retailpulse-tool.png)
 
-> Ảnh vẽ từ bản thiết kế ban đầu nên khác thực tế ở ba điểm: CI hiện chỉ có `ruff` và slim CI (chưa có `sqlfluff`, chưa tự deploy); dbt không dùng snapshot (SCD2 tự xây bằng window function); Great Expectations chưa có trong ảnh.
+> Ảnh vẽ từ bản thiết kế ban đầu nên khác thực tế ở ba điểm: CI hiện có `ruff`, `pytest` và slim CI (chưa có `sqlfluff`, chưa tự deploy); dbt không dùng snapshot (SCD2 tự xây bằng window function); Great Expectations chưa có trong ảnh.
 
 | Công cụ | Vai trò |
 | --- | --- |
@@ -177,8 +177,8 @@ Hình dưới là cùng pipeline nhìn theo công cụ: dữ liệu đi từ tr�
 | Dagster | Điều phối dlt, dbt và kiểm tra chất lượng thành asset, job, lịch chạy hằng ngày |
 | Preset | Dashboard BI trên marts |
 | Great Expectations | Kiểm tra chất lượng dữ liệu RAW |
-| GitHub Actions | Lint `ruff`, slim CI cho dbt, bảo vệ nhánh `main` |
+| GitHub Actions | Lint `ruff`, `pytest` với PostgreSQL, slim CI cho dbt, bảo vệ nhánh `main` |
 
-CI hiện chỉ có `ruff` và slim CI cho dbt; chưa có CD, `sqlfluff` và `pytest`.
+CI có `ruff`, `pytest` và slim CI cho dbt; chưa có CD và `sqlfluff`. Chạy `make check` trước khi mở PR.
 
 Muốn chạy thử? Bắt đầu từ [docs/README.md](./docs/README.md): có lộ trình theo phase và các lệnh chạy nhanh.

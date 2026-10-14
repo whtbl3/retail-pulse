@@ -11,14 +11,14 @@ relevant section before changing behavior. When docs disagree with the spec, the
 - `make install`: `uv sync` (dev tools included). Always run Python through `uv run`.
 - `make up`: start Postgres. Needed by `make test`; without it, DB tests are skipped, not failed.
 - `make test`: pytest. Creates and drops a disposable `<PG_DB>_test` database.
-  `tests/test_orchestration.py` also needs a dbt profile (`~/.dbt/profiles.yml` or `DBT_PROFILES_DIR`)
-  and fails without one.
-- `uv run ruff check src tests && uv run ruff format --check src tests`: the same lint CI runs.
+  `tests/test_orchestration.py` also needs `dbt/target/manifest.json` (run `make dbt-parse` once) and a dbt
+  profile; it fails without them.
+- `make check`: ruff without fixing, then `make test`. Same as CI. Run it before calling a change done.
 - `make dbt-parse`: compiles dbt without querying data. Needs `.env` and `dbt/profiles.yml`.
 - `make dbt-build`, `make ingest`, `make dagster`: need a real Snowflake account. Do not run them unless
   the user asks.
 
-Before calling a change done, run lint and `make test`, and show the output.
+Before calling a change done, run `make check` and show the output.
 
 ## Rules that are easy to break
 
@@ -35,7 +35,8 @@ Before calling a change done, run lint and `make test`, and show the output.
 
 ## Workflow
 
-- Every change reaches `main` through a pull request with green `lint` and `dbt-slim-ci` checks.
+- Every change reaches `main` through a pull request with green `lint`, `test` and `dbt-slim-ci` checks.
+  Fill in the PR template checklist (Definition of Done, spec §16).
   Branch names: `feat/...`, `fix/...`, `docs/...`. Commit messages: `feat: ...`, `fix: ...`, `docs: ...`.
 - Use plan mode for changes that touch several files or an unfamiliar area. Skip it when the diff fits
   in one sentence.

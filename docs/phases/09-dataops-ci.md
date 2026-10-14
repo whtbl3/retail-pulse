@@ -97,7 +97,7 @@ Xong thì đóng PR và xóa nhánh, không merge.
 | Settings, Rules, Rulesets | Tạo ruleset `protect-main`: **Active**, áp cho default branch, **bypass để trống** | Chủ repo cũng phải đi qua PR |
 | Trong ruleset | **Restrict deletions** và **Block force pushes** | Không xóa nhầm hoặc ghi đè lịch sử `main` |
 | Trong ruleset | **Require a pull request before merging** (approvals = 0; làm nhóm thì 1) | Không thì vẫn push thẳng được và CI vô dụng |
-| Trong ruleset | **Require status checks to pass**: `lint`, `dbt-slim-ci` | CI đỏ thì không merge được |
+| Trong ruleset | **Require status checks to pass**: `lint`, `test`, `dbt-slim-ci` | CI đỏ thì không merge được. `test` chỉ hiện trong ô chọn sau khi đã chạy một lần |
 
 Secret không được truyền cho PR từ fork (chủ ý): nếu truyền, người ngoài chỉ cần sửa workflow trong fork để in key
 ra log.
@@ -116,6 +116,30 @@ mọi PR đều tốn thời gian chạy dbt dù không đụng dbt.
 > (vì sao phải cẩn thận với PR từ fork) và [Pull request merges](https://docs.github.com/en/pull-requests/reference/pull-request-merges)
 > (squash merge).
 
+## Cổng chất lượng ở máy bạn
+
+CI chỉ báo lỗi sau khi bạn đã push. Kiểm tra ở máy trước thì sửa nhanh hơn và không tốn một vòng CI.
+
+**`make check`** chạy đúng những gì CI chạy cho Python: `ruff check`, `ruff format --check` (không sửa file) rồi
+`make test`. Chạy trước khi mở PR.
+*Khác `make lint`:* `lint` tự sửa file, `check` chỉ kiểm tra và báo lỗi, giống CI.
+*Lưu ý:* `tests/test_orchestration.py` đọc `dbt/target/manifest.json`, nên chạy `make dbt-parse` một lần trước.
+
+**pre-commit** chạy trước mỗi `git commit`, chỉ trên file đã stage: ruff, xóa khoảng trắng cuối dòng, kiểm tra
+YAML/TOML, chặn file lớn hơn 1 MB và chặn private key. Cài một lần cho mỗi bản clone:
+```bash
+uv run pre-commit install
+```
+*Nếu bỏ qua:* commit vẫn được, lỗi chỉ lộ ra khi CI chạy. *Không nên* chạy `pre-commit run --all-files` lúc này: nó
+sửa khoảng trắng ở khoảng 40 file dbt, làm slim CI build lại gần hết model. Để việc đó cho một PR dọn dẹp riêng.
+
+**Job `test` trong CI** dựng PostgreSQL 16 làm service, chạy `dbt deps` và `dbt parse` (không kết nối Snowflake, nên dùng
+profile CI với giá trị giả, không cần secret), rồi `pytest`. Trên máy bạn test cần Postgres bị skip nếu quên `make up`;
+trong CI chúng luôn chạy.
+
+> **Đọc thêm:** [pre-commit](https://pre-commit.com/) và
+> [Service containers trong GitHub Actions](https://docs.github.com/en/actions/use-cases-and-examples/using-containerized-services/creating-postgresql-service-containers).
+
 ## Làm việc hằng ngày (trunk-based)
 
 Một nhánh chính `main`; mỗi việc một nhánh ngắn (vài giờ đến vài ngày), PR nhỏ, CI xanh thì merge. Không dùng
@@ -132,14 +156,16 @@ git switch -c fix/ten-ngan
 git add -A && git commit -m "..."
 git push -u origin fix/ten-ngan     # git in link mở PR
 ```
-Mở PR, đợi hai check xanh, bấm **Squash and merge**. Sau đó `git switch main && git pull && git fetch --prune`,
+Mở PR (GitHub tự điền mẫu có checklist), đợi các check xanh, bấm **Squash and merge**. Sau đó `git switch main && git pull && git fetch --prune`,
 và `git branch -D <nhánh>` (squash làm Git tưởng nhánh chưa merge).
 
 ## Các file
 
 | File | Việc |
 |---|---|
-| `.github/workflows/ci.yml` | Mỗi PR: `ruff`; slim CI dbt + dọn schema (chỉ khi PR đổi dbt, xem trên) |
+| `.github/workflows/ci.yml` | Mỗi PR: `ruff`; `pytest` với PostgreSQL; slim CI dbt + dọn schema (chỉ khi PR đổi dbt, xem trên) |
+| `.github/pull_request_template.md` | Mẫu mô tả PR, có checklist Definition of Done (spec §16) |
+| `.pre-commit-config.yaml` | Kiểm tra trước mỗi commit ở máy bạn (ruff, khoảng trắng, YAML, private key) |
 | `.github/workflows/manifest.yml` | Mỗi lần merge đổi `dbt/**`: `dbt parse --target prod`, lưu artifact `prod-manifest` |
 | `dbt/ci/profiles.yml` | Profile CI (target `ci`, `prod`); chỉ dùng `env_var()` nên được commit |
 | `dbt/macros/generate_schema_name.sql` | Target `ci` thì thêm tiền tố `PR_<số>_` |
@@ -153,7 +179,9 @@ và `git branch -D <nhánh>` (squash làm Git tưởng nhánh chưa merge).
 - **`fct_sales` incremental:** schema CI mới chưa có bảng nên lần build đầu chạy đầy đủ (~270 nghìn dòng, nhẹ).
 - **Chưa ghim SHA cho action.** Mỗi lần chạy GitHub báo `checkout@v4` và `setup-uv@v5` còn dùng Node.js 20, và
   `ubuntu-latest` chuyển sang Ubuntu 26 từ 19/10/2026. Không làm CI đỏ; nếu hỏng sau ngày đó, thử `ubuntu-24.04`.
-- **Chưa có `pytest` và `sqlfluff` trong CI:** cả hai cần manifest hoặc kết nối dbt. Thêm khi cần.
+- **Chưa có `sqlfluff`:** templater `dbt` (cấu hình trong `pyproject.toml`) phải kết nối Snowflake mới chạy được.
+  Đổi sang templater `jinja` thì chạy được không cần kết nối, nhưng lần thử đầu báo 209 lỗi ở 19/20 model
+  (chủ yếu thụt lề và khoảng trắng). Cần chọn quy ước SQL rồi sửa trong một PR riêng.
 
 ## Đã chạy thật
 
