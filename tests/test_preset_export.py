@@ -77,6 +77,11 @@ def make_export(path, databases=1, datasets=1):
                 "uuid": "99999999-0000-0000-0000-000000000000",
                 "version": "1.0.0",
                 "database_uuid": DB_UUID,
+                "cache_timeout": 600,
+                "normalize_columns": False,
+                "always_filter_main_dttm": False,
+                "filter_select_enabled": True,
+                "folders": [{"uuid": "88888888-0000-0000-0000-000000000000", "name": "Old"}],
             }
             bundle.writestr(
                 f"dataset_export_x/datasets/RetailPulse0/sales_enriched_{i}.yaml",
@@ -112,6 +117,12 @@ def test_bundle_has_the_dataset_on_the_existing_connection(tmp_path):
     assert dataset["main_dttm_col"] == "FULL_DATE"
     assert {m["metric_name"] for m in dataset["metrics"]} == set(EXPECTED)
     assert all(m["verbose_name"] and m["description"] for m in dataset["metrics"])
+    # Fields Superset's ImportV1DatasetSchema refuses as null keep the export's values
+    assert dataset["normalize_columns"] is False
+    assert dataset["always_filter_main_dttm"] is False
+    assert dataset["offset"] == 0
+    assert dataset["cache_timeout"] == 600
+    assert dataset["folders"] is None  # the old dataset's folders point at its own columns
     assert {"FULL_DATE", "STORE_NAME", "NET_AMOUNT"} <= {
         c["column_name"] for c in dataset["columns"]
     }
