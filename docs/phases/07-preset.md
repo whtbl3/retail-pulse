@@ -87,6 +87,9 @@ Further reading: [Superset: connecting to Snowflake](https://superset.apache.org
 
 ## Step 4: Dataset
 
+> **Replaced in [phase 11](11-semantic-layer.md):** the virtual dataset below moved into dbt as
+> `fct_sales_enriched`, and the charts use the metrics defined in dbt instead of hand-written `SUM(...)`.
+
 Each dataset is a table or a SQL query. The fact only has keys, so create a **virtual dataset** named `sales_enriched`
 that joins `fct_sales` with four dimensions, so charts have store, product, date and promotion names. Go to **SQL**,
 pick the `RetailPulse` database and the `marts` schema, and run:

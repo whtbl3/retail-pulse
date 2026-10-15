@@ -22,6 +22,6 @@ Plan: [plan.md](plan.md)
       export the `sales_enriched` dataset from Preset, `make preset-zip EXPORT=<zip>`, import the ZIP,
       rebuild the five charts on the metrics, rerun the reconciliation (AC5, AC6, AC7), delete the old
       virtual dataset.
-- [ ] T11: Docs: `docs/phases/11-semantic-layer.md`, `docs/README.md` row, note in
+- [x] T11: Docs: `docs/phases/11-semantic-layer.md`, `docs/README.md` row, note in
       `docs/phases/07-preset.md`, Project-Spec §4, §5, §10.2, §10.3, §12, §14, §15 and §17, `CLAUDE.md`,
       `make help`. Spec status Implemented.

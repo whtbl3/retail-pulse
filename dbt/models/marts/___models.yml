@@ -218,7 +218,7 @@ models:
         description: Part of day (Morning, Afternoon, Evening, Night); "Unknown" for -2.
 
   - name: fct_sales
-    description: Sales fact (transaction fact), one row per line item of a completed invoice. All money and quantity measures are additive except regular_price and unit_cost (unit prices). Ratios (profit margin, average invoice value) are computed in Preset, not stored in the fact.
+    description: Sales fact (transaction fact), one row per line item of a completed invoice. All money and quantity measures are additive except regular_price and unit_cost (unit prices). Ratios (gross margin, average basket value) are semantic-layer metrics (models/semantic/sales.yml), not stored in the fact.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
