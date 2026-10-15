@@ -7,6 +7,28 @@ plating for the dashboard. Each step below can be checked on its own with `dbt b
 In total there are 20 models (10 staging, 2 intermediate, 7 dimensions, 1 fact) and 148 tests; a full-project
 `dbt build` reports `PASS=168` (168 is models plus tests).
 
+## Why it is needed
+
+RAW holds what dlt loaded: copied rows, every version of every product, keys instead of names, and all three
+transaction statuses. Preset cannot use that directly: summing RAW would count returns and copies, and profit would use
+today's cost for last year's sales. dbt turns RAW into a star schema with one fact table (`fct_sales`) and its
+dimensions, keeps only `completed` transactions, and builds the product and employee history (SCD2) so each sale uses
+the cost and store valid at that moment. Every model is SQL in git with tests, so a rule is written once and checked on
+every build. It reads RAW and never writes to it.
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| Staging | One view per RAW table: rename, cast, drop `_dlt_*` columns, remove copies, keep only `completed` sales. No joins, no business logic |
+| Star schema | A fact table of measures (`fct_sales`) surrounded by dimension tables (`dim_product`, `dim_store`, ...) it joins to by key |
+| Grain | What one fact row means: one line item of a `completed` transaction (`transaction_id`, `line_number`) |
+| SCD Type 2 | A dimension that keeps one row per version with `valid_from`, `valid_to` and `is_current`. Built in `int_product_scd2` and `int_employee_scd2` with window functions |
+| Surrogate key | A key made by the warehouse; for a Type 2 dimension a hash of `id` and `valid_from`, so each version has its own key. The fact stores it, which pins the version valid at the time of sale |
+| Incremental model | `fct_sales` only processes rows newer than what it already holds and merges them on `(transaction_id, line_number)`, instead of rebuilding the table |
+| Materialization | How dbt stores a model: view (staging), table (intermediate, dimensions) or incremental (`fct_sales`) |
+| Data test | A query that returns bad rows; zero rows means pass. `dbt build` runs them after each model |
+
 ## Step 1: Connection and `dbt debug`
 
 The dbt project lives in `dbt/` and uses dbt-core 1.12 and the Snowflake adapter in `.venv` (installed with `uv`). Your
