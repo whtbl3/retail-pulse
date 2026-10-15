@@ -1,6 +1,9 @@
+{# on_schema_change='fail' is required with an enforced contract (spec 005): a change of shape stops
+   the run instead of altering the table; adding a column on purpose needs the fct_sales full refresh #}
 {{ config(
     materialized='incremental',
-    unique_key=['transaction_id', 'line_number']
+    unique_key=['transaction_id', 'line_number'],
+    on_schema_change='fail'
 ) }}
 
 with items as (
