@@ -71,7 +71,7 @@ once and is never retried, because the same data gives the same failure.
 **Recovery.**
 
 1. Open the step logs: dbt prints the failing model or test, for example `not_null_fct_sales_product_key`.
-2. Reproduce locally: `make dbt-build` (or `cd dbt && uv run dbt build -s <model>+`).
+2. Reproduce locally, in your dev schemas: `make dbt-build SELECT=<model>+`.
 3. Fix the model or test through a pull request; CI runs dbt slim CI on it.
 4. After the merge: `git pull`, `make dagster-up` (rebuilds the image), then **Re-execute** > **From
    failure**.

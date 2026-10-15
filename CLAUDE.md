@@ -19,8 +19,9 @@ relevant section before changing behavior. When docs disagree with the spec, the
 - `make dbt-parse`: compiles dbt without querying data. Needs `.env` and `dbt/profiles.yml`.
 - `make preset-zip EXPORT=<zip>`: builds the Preset dataset import ZIP from the MetricFlow metrics in
   `dbt/models/semantic/`. Offline; the user imports the ZIP in Preset.
-- `make dbt-build`, `make ingest`, `make dagster`: need a real Snowflake account. Do not run them unless
-  the user asks.
+- `make dbt-build` (dev: changed models into `DBT_<NAME>_*`), `make dbt-build-prod`, `make dbt-full-refresh`
+  (production), `make ingest`, `make dagster`: need a real Snowflake account. Do not run them unless the user
+  asks. Only Dagster and commands named prod or full-refresh write production (`docs/phases/12-environments.md`).
 
 Before calling a change done, run `make check` and show the output.
 
