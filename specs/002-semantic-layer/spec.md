@@ -32,11 +32,11 @@ Out of scope:
 - Replacing Preset or adding another BI tool.
 - New marts, new facts or changes to the grain or keys of `fct_sales` and the dimensions.
 - Metrics for domains that are out of scope (§6.2): customers, inventory, returns.
-- A paid hosted service, unless open question 1 chooses it.
+- A paid hosted service (Q1).
 
 ## Requirements
 
-1. **R1:** Each metric on the dashboard (and the ones listed in open question 2) has exactly one
+1. **R1:** Each metric listed under Q2 has exactly one
    definition in the repo, with a name, a description, its formula and the dimensions it can be grouped
    by.
 2. **R2:** Metrics only count `completed` transactions, because `fct_sales` only holds them (§10.3); no
@@ -88,17 +88,11 @@ Out of scope:
 | Preset stays the BI tool | Proposed | Owner's choice; the semantic layer serves it, it does not replace it |
 | Ratio metrics are ratios of sums | Proposed | An average of row-level ratios weights small sales like large ones and gives a wrong margin |
 
-## Open questions
+## Answers to open questions
 
-1. [NEEDS CLARIFICATION] How do the metrics reach Preset? (a) dbt Core only: the definitions are
-   synced into the Preset dataset as saved metrics by a command in the repo, free, but Preset does not
-   query MetricFlow live; (b) dbt Cloud Semantic Layer, which Preset queries live, but needs a paid dbt
-   Cloud plan. Recommended: (a).
-2. [NEEDS CLARIFICATION] Which metrics are in the first version? Recommended: the five already on the
-   dashboard (`net_revenue`, `gross_revenue`, `discount_amount`, `gross_profit`, `quantity_sold`) plus
-   `gross_margin`, `transaction_count` and `average_basket_value`.
-3. [NEEDS CLARIFICATION] When are the metrics synced to Preset: by hand with one `make` command after a
-   metric changes, or automatically after every `full_pipeline` run? Recommended: by hand, because
-   metrics change far less often than data.
-4. [NEEDS CLARIFICATION] Is the current dashboard rebuilt on the shared metrics (R6), or kept as is
-   with only new charts using them? Recommended: rebuilt.
+- **Q1 How metrics reach Preset:** dbt Core only. A command in the repo syncs the metric definitions
+  into the Preset dataset as saved metrics; Preset does not query MetricFlow live. No paid service.
+- **Q2 First metrics:** the five on the dashboard (`net_revenue`, `gross_revenue`, `discount_amount`,
+  `gross_profit`, `quantity_sold`) plus `gross_margin`, `transaction_count` and `average_basket_value`.
+- **Q3 When to sync:** by hand, with one `make` command run after a metric definition changes.
+- **Q4 Existing dashboard:** rebuilt so every chart uses the shared metrics (R6).
