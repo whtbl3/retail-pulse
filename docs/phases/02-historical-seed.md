@@ -3,6 +3,26 @@
 Goal: load a realistic, **reproducible** base dataset (the same `--seed` gives the same data).
 Detailed design: [design/data-generator.md](../design/data-generator.md) (Part 1).
 
+## Why it is needed
+
+An empty source gives dlt nothing to load, dbt nothing to model and Preset nothing to show. The seed fills Postgres
+with about a year of history (default 365 days, ~100,000 transactions) that follows simple business rules, so the
+dashboard has trends to read and the dbt tests have realistic edge cases. It is reproducible: the same `--seed` gives
+the same data, so test results and row counts can be compared between runs. It runs once at the start; ongoing changes
+come from `stream.py` in [phase 4](04-product-change-simulator.md).
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| Seed (data) | The one-time batch load of base data into Postgres, done by `seed.py`. It refuses to run on a database that already has data, unless you pass `--reset` |
+| Random seed (`--seed`) | The starting number for the random generators (default 42). The same value gives the same stores, products and transactions |
+| Reference data | Small lookup and master tables (`store`, `employee`, `product`, `promotion`, ...) written first, because transactions point to them |
+| Transaction data | `sales_transaction` (receipt header) and `sales_transaction_item` (its lines), the large tables written in batches |
+| Batch | A group of transactions written in one DB transaction: committed together, or rolled back together on error |
+| `regular_price` | The selling price copied onto each line at the time of sale, so a later price change does not alter old receipts |
+| Transaction status | `completed`, `cancelled` or `returned`. The seed creates all three; analytics later keep only `completed` |
+
 ## Run
 
 ```bash

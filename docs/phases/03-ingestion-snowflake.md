@@ -2,6 +2,28 @@
 
 Goal: move OLTP data to Snowflake. The first run loads everything, later runs load only new data.
 
+## Why it is needed
+
+Postgres is built to record sales (OLTP), not to answer analytics queries, and it only keeps the current state of
+each row. This phase copies the data into Snowflake, a warehouse built for analytics, as an
+untouched `RAW` layer that dbt transforms in phase 5 (ELT: load first, transform in the warehouse). Because changed
+`product` and `employee` rows are appended as new rows, RAW becomes the only place that keeps their history; dbt builds
+SCD2 from it. Loading only new rows (incremental) keeps each run small and cheap. It also sets up dedicated Snowflake
+users and roles, so a bug in dlt or dbt cannot delete data it should not touch.
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| dlt pipeline | The Python object that reads from Postgres and loads into Snowflake. `retail_pipeline()` in `ingestion/pipelines.py` is the only definition, used by `make ingest` and Dagster |
+| Resource | One table in the dlt source. Each gets its own load method (append or replace) |
+| Incremental load | Each run loads only rows newer than the previous run, instead of the whole table |
+| Cursor | The column that tells dlt what is new: `updated_at`. dlt stores the last value it loaded (its state) in `~/.dlt/pipelines` |
+| Append-only | New and changed rows are added as new rows in RAW; nothing is updated or deleted. Used for the four tables with `updated_at` |
+| Replace | The table in RAW is overwritten on every run. Used for the six small reference tables |
+| Role and service user | `LOADER` / `DLT_LOADER` for dlt, `TRANSFORMER` / `DBT_TRANSFORMER` for dbt, each with only the privileges it needs |
+| Key-pair auth | Login with a private key kept on your machine (`.snowflake/*.p8`); Snowflake stores only the public key. No password to leak |
+
 | Table | Load method | Key / cursor |
 |---|---|---|
 | `sales_transaction`, `sales_transaction_item`, `product`, `employee` | incremental, **append** | `updated_at` |

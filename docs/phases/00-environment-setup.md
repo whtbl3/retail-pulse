@@ -2,6 +2,26 @@
 
 Goal: have every tool needed to run all later phases on a local machine.
 
+## Why it is needed
+
+Every later phase runs Python tools from this repo (the generators, dlt, dbt, Dagster, Great Expectations) and a
+PostgreSQL container. If each machine installed its own versions, a dbt or dlt upgrade on one laptop could change what
+lands in Snowflake, and nobody could reproduce the bug. This phase pins the toolchain once: Python 3.12, one
+`uv.lock` for every package, Docker Compose for Postgres, and a `Makefile` with the commands the other phases use. It
+also sets the rule that credentials live in files outside git, because the repo is public.
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| uv | The Python package and environment manager. `make install` runs `uv sync`, and every Python command runs through `uv run` |
+| Lock file (`uv.lock`) | The exact version of every package, committed to git. `uv sync` installs exactly these versions on every machine and in CI |
+| `.venv` | The project's own Python environment that `uv sync` creates. dbt and Dagster run from here, not from a dbt installed elsewhere on the machine |
+| `.env` | Local settings (Postgres login, Snowflake account, key paths) read by Python, Docker Compose and dbt. Never committed |
+| Template file | A committed file such as `.env.example` that shows which settings exist, with no real values. You copy it to the real file |
+| Docker Compose | Runs the `postgres:16` container from `infras/docker-compose.yml`, so the source database is the same everywhere |
+| `Makefile` target | A short command (`make up`, `make test`) that wraps the real one. `make help` lists them all |
+
 | Component | Requirement |
 |---|---|
 | Operating system | Ubuntu or WSL2 |
