@@ -1,13 +1,29 @@
 # Phase 4: Source change simulator (`stream.py`)
 
+## Why it is needed
+
 Real data does not stand still: prices change, employees move between stores, new receipts keep arriving. If the source
 only had a static dataset, you could not test the two most important parts of the project: **SCD2** (history of price
 changes and store transfers) and **incremental** (loading only new data). `stream.py` creates those small, realistic changes.
+Without it, every product and employee would have a single version in RAW, the SCD2 models in phase 5 would have
+nothing to track, and the incremental path of `fct_sales` would never see a new row.
+
 Detailed design: [design/data-generator.md](../design/data-generator.md) (Part 2).
 
 By default `stream.py` **only runs UPDATEs**: `unit_cost` and `unit_price` of existing products, and `store_id` of
 current employees (empty `end_date`). No INSERT, no DELETE, and it never sets `updated_at` itself (the DB trigger does that).
 With `--sales N`, each cycle also **INSERTs N new sales transactions** (see "Extra sales").
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| Cycle | One run of changes: a few products repriced, employees transferred, optional new sales, committed as one DB transaction |
+| Version | One state of a product or employee. Each ingested change adds a row in RAW with the same `id` and a newer `updated_at` |
+| SCD Type 2 | Slowly changing dimension that keeps every version with a validity range, built by dbt in phase 5 |
+| Type 2 column | A column whose change creates a new version. `stream.py` changes `unit_cost` and `unit_price` of products and `store_id` of employees; the full list is in phase 5 |
+| Store transfer | Changing an active employee's `store_id` to a different store, so sales are credited to the right store over time |
+| Watermark | The highest `updated_at` dlt has already loaded. New sales from `--sales` must be timed after it, or they are never loaded |
 
 ## Run
 

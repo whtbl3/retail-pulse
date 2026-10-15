@@ -3,6 +3,28 @@
 Goal: build a 3NF source database that simulates a retail POS system.
 Why it is designed this way (conceptual → logical → physical): [Operational data modeling](../design/operational-data-modeling.md).
 
+## Why it is needed
+
+The pipeline (PostgreSQL → dlt → Snowflake RAW → dbt → Dagster → Preset) needs a source system to read from. This
+database plays the role of a store's point-of-sale (POS) system: 10 tables in the `retail` schema, normalized to 3NF.
+Its constraints stop bad data where it is created (negative money, unknown status), so later layers do not have to
+guess. Its `updated_at` column, kept current by a trigger, is what dlt uses in phase 3 to load only new and changed
+rows. Without a correct `updated_at`, changes would never reach Snowflake and the price history in phase 5 would be
+wrong without any error.
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| OLTP | Online transaction processing: a database built for many small writes, like recording one sale. Analytics run elsewhere (Snowflake) |
+| 3NF (third normal form) | Each fact is stored in one place only. A brand name lives in `brand`, not on every product row |
+| DDL | The SQL that creates tables and constraints, here `infras/postgres/init/01_schema.sql` |
+| ORM | Python classes in `src/retail_pulse/oltp/models.py` that map to the tables, used by the generators. They must match the DDL |
+| Identity primary key | `BIGINT GENERATED ALWAYS AS IDENTITY`: the database assigns the `id`, the application never sets it |
+| Audit columns | `created_at` and `updated_at` on every table. A trigger sets `updated_at` on every UPDATE |
+| Trigger | A function Postgres runs automatically on a table event. Here it keeps `updated_at` current without relying on the application |
+| Docker volume | Where the container keeps the database files. `make down` keeps it; `make db-reset` deletes it |
+
 ## Components
 
 | File | Role |
