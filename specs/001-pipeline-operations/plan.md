@@ -54,6 +54,7 @@ likely causes, recovery steps, and the steps that are never allowed (`make seed`
 | `src/retail_pulse/orchestration/definitions.py` | Register the check and the sensor |
 | `dbt/models/staging/___sources.yml` | Freshness on the four incremental tables |
 | `.env.example` | `SLACK_WEBHOOK_URL`, `DAGSTER_BASE_URL` |
+| `pyproject.toml`, `uv.lock` | Add `dagster-postgres` (Postgres run storage) |
 | `tests/test_operations.py` | New: tests below |
 | `docs/runbook.md` | New |
 | `docs/phases/10-operations.md`, `docs/README.md` | New phase guide and its row |
@@ -84,6 +85,16 @@ likely causes, recovery steps, and the steps that are never allowed (`make seed`
 | AC8 | pytest: with no `SLACK_WEBHOOK_URL`, no HTTP call is made and a log line is written |
 | AC9 | Review: the runbook section exists with the three parts |
 | R9 | pytest: `.dockerignore` lists `.env`, `.dlt/secrets.toml`, `.snowflake`, `*.p8`; manual `docker compose config` check |
+
+## Changes during the build
+
+- `dagster-postgres` is a new dependency; Postgres run storage needs it.
+- `dagster.yaml` sets `scheme: postgresql+psycopg2`: SQLAlchemy 2.1 picks psycopg 3 for `postgresql://`,
+  which dagster-postgres does not support.
+- `.snowflake/` is mounted at its host path (`REPO_DIR` from the Makefile), so the absolute key paths in
+  `.env` and `.dlt/secrets.toml` work unchanged in the containers.
+- The daemon keeps dlt's local state in a `dlt_state` volume.
+- `uv` is installed in the image with `pip`, not copied from `ghcr.io`.
 
 ## Docs to update
 
