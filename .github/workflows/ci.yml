@@ -56,6 +56,8 @@ jobs:
       - run: uv sync --frozen
       - run: uv run dbt deps --project-dir dbt
       - run: uv run dbt parse --project-dir dbt
+      # Semantic layer (spec 002): checks the metric definitions without connecting to a warehouse
+      - run: cd dbt && DBT_PROFILES_DIR=$PWD/ci uv run mf validate-configs --skip-dw
       - run: uv run pytest
 
   dbt-slim-ci:
