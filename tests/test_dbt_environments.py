@@ -287,11 +287,18 @@ def test_every_mart_has_an_enforced_contract(prod):
 
 
 def test_columns_tested_not_null_are_declared_not_null(prod):
-    """Snowflake enforces not_null constraints; keep them in step with the not_null tests."""
+    """Snowflake enforces not_null constraints; keep them in step with the not_null tests.
+
+    Only a strict test (every row, severity error) becomes a constraint: a test with a `where`
+    filter or `severity: warn` allows some nulls, which the warehouse would reject.
+    """
     tested = {
         (n["attached_node"], n["column_name"])
         for n in prod["nodes"].values()
-        if n["resource_type"] == "test" and n.get("test_metadata", {}).get("name") == "not_null"
+        if n["resource_type"] == "test"
+        and n.get("test_metadata", {}).get("name") == "not_null"
+        and not n["config"].get("where")
+        and n["config"]["severity"].lower() == "error"
     }
     for node in models(prod):
         if layer(node) != "marts":
