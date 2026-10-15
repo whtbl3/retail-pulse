@@ -62,6 +62,7 @@ version, and the main pipeline behaviors are covered by focused tests and docume
 | Cloud warehouse | Snowflake | Database `RETAIL_PULSE`, warehouse `RETAIL_WH` |
 | Transformation | dbt Core with dbt-snowflake | Owns warehouse transformation and SCD logic |
 | Orchestration | Dagster | Integrates dlt and dbt assets |
+| Semantic layer | MetricFlow (dbt-metricflow, dbt Core) | Business metrics defined once in the dbt project; copied into Preset by import (spec 002) |
 | BI | Preset | Reads analytics-ready mart models |
 | Data quality on RAW | Great Expectations | Runs before dbt as blocking Dagster asset checks (phase 8) |
 | CI | GitHub Actions | Lint, pytest against PostgreSQL, and dbt slim CI on a separate Snowflake database (phase 9) |
@@ -77,7 +78,8 @@ flowchart LR
     RAW -->|"dbt"| STG["Staging"]
     STG --> INT["Intermediate"]
     INT --> MART["Marts / Gold"]
-    MART --> BI["Preset"]
+    MART --> SL["Semantic layer<br/>MetricFlow metrics"]
+    SL -->|"dataset ZIP import"| BI["Preset"]
     DAG["Dagster"] -. orchestrates .-> GEN
     DAG -. orchestrates .-> RAW
     DAG -. orchestrates .-> STG
@@ -332,6 +334,7 @@ for model details.
 | `dim_time` | One minute of the day (1,440 rows) | Type 0 (generated) |
 | `dim_promotion` | One promotion, plus `-1` "No promotion" | Type 1 |
 | `dim_payment_method` | One payment method | Type 1 |
+| `fct_sales_enriched` | Same as `fct_sales` | `fct_sales` joined to its dimensions on surrogate keys; the model the semantic layer reads |
 
 Models follow the `stg_`, `int_`, `fct_` and `dim_` naming convention. Surrogate keys are 64-bit integers
 produced by the Snowflake `HASH` function (macro `surrogate_key`); `-1` and `-2` are reserved values.
@@ -350,7 +353,8 @@ UTC for the SCD2 range joins.
 
 Measures: `quantity`, `regular_price`, `unit_cost`, `gross_amount`, `discount_amount`,
 `coupon_amount`, `net_amount`, `cost_amount`, `gross_profit`. All are additive except the two unit
-prices. Ratios such as gross margin are metrics in the BI layer, not fact columns.
+prices. Ratios such as gross margin are metrics in the semantic layer (`dbt/models/semantic/`), not fact
+columns; they are ratios of sums.
 
 - `gross_amount = quantity * regular_price`;
 - `discount_amount` is per unit: percentage promotions give `quantity * regular_price * amount / 100`,
@@ -446,6 +450,14 @@ Delivered: the dashboard `RetailPulse Sales Overview` with five charts (net reve
 category and by store; promotion impact; gross profit by month) and two filters (store, time range),
 all labels in English. Data is as fresh as the last daily `full_pipeline` run.
 
+Semantic layer (spec `specs/002-semantic-layer/`): every business metric (`net_revenue`, `gross_revenue`,
+`discount_amount`, `gross_profit`, `quantity_sold`, `transaction_count`, `gross_margin`,
+`average_basket_value`) is defined once with MetricFlow in `dbt/models/semantic/sales.yml`, on
+`fct_sales_enriched`, and validated in CI. The Preset API is Enterprise only, so `make preset-zip` builds a
+dataset import ZIP that the owner imports in Preset (Data > Datasets > Import); it reuses the existing
+`PRESET_READER` connection. Charts use those saved metrics, never hand-written aggregates. A metric is
+changed in dbt, never in Preset.
+
 ## 13. Quality Attributes
 
 ### 13.1 Maintainability
@@ -503,6 +515,7 @@ dbt tests are required for transformed models. Great Expectations validates the 
 | 8 | Great Expectations checks on RAW (blocking asset checks in Dagster) |
 | 9 | GitHub Actions: lint and dbt slim CI, branch protection |
 | 10 | Operations: always-on Dagster in Docker, ingestion retry, RAW freshness, Slack failure alerts, runbook |
+| 11 | Semantic layer: MetricFlow metrics in dbt, imported into Preset |
 
 ## 15. Repository Contracts
 
@@ -523,6 +536,8 @@ Existing implementation locations:
   check (`freshness.py`) and Slack failure sensor (`alerts.py`);
 - `src/retail_pulse/quality/`: Great Expectations checks on RAW;
 - `dbt/`: dbt project (models, tests, macros) and `dbt/ci/profiles.yml` for CI;
+- `dbt/models/semantic/`: MetricFlow semantic model and metrics;
+- `src/retail_pulse/semantic/`: builds the Preset dataset import ZIP from the metrics (`make preset-zip`);
 - `.github/workflows/`: CI (`ci.yml`) and production manifest (`manifest.yml`);
 - `.env.example`, `.dlt/secrets.toml.example`, `dbt/profiles.yml.example`: configuration templates (real files are never committed);
 - `tests/`: pytest suites; `conftest.py` provisions a disposable PostgreSQL test database;
@@ -582,6 +597,9 @@ resulting analytics in Preset.
 | Dagster runs as Docker Compose services next to PostgreSQL, with run storage in PostgreSQL | Final | Docker Compose is the only deployment target; PostgreSQL storage keeps history across restarts (spec 001) |
 | Only ingestion is retried (2 times, 5 minutes apart) | Final | dbt and data-quality failures are deterministic; retrying them hides the error and costs warehouse time (spec 001) |
 | Stale RAW warns, never blocks; failures alert on Slack through an incoming webhook | Final | A quiet day is not an error; the owner learns of a failure without opening the UI (spec 001) |
+| Business metrics are defined once with MetricFlow in the dbt project; Preset stays the BI tool | Final | One versioned, CI-validated definition per metric, so teams and charts cannot drift apart (spec 002) |
+| Metrics reach Preset as a dataset ZIP import, not through the Preset API | Final | The Preset API is Enterprise only; the import works on the owner's plan and reuses the existing connection (spec 002) |
+| Ratio metrics are ratios of sums | Final | An average of row-level ratios weights small sales like large ones and gives a wrong margin (spec 002) |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.
