@@ -67,8 +67,8 @@ check: ## Quality gate before opening a PR: ruff (no fixes) then pytest; same as
 clean-raw: ## Delete Snowflake RAW + dlt state without confirmation
 	uv run python -m retail_pulse.ingestion.clean --yes
 
-quality: ## Great Expectations: check RAW data quality (exit code 1 on failure)
-	uv run python -m retail_pulse.quality.raw_checks
+quality: ## Great Expectations: check RAW data quality (loads .env; exit code 1 on failure)
+	set -a && . ./.env && set +a && uv run python -m retail_pulse.quality.raw_checks
 
 dbt-deps: ## Install dbt packages (dbt_utils) into dbt/dbt_packages
 	$(DBT) deps
