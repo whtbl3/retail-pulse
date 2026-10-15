@@ -248,7 +248,6 @@ models:
         data_tests: [unique, not_null]
       - name: full_date
         data_type: date
-        constraints: [{type: not_null}]
         granularity: day
         description: Date as DATE; null for Unknown.
         data_tests:
@@ -409,7 +408,6 @@ models:
         description: Unit selling price at the time of sale. Not additive.
       - name: unit_cost
         data_type: number
-        constraints: [{type: not_null}]
         description: Unit cost of the product version valid at transaction_ts, stored in the fact at load time; null if product_key is -2. Not additive.
         data_tests:
           - not_null:

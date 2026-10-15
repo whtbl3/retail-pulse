@@ -436,7 +436,10 @@ Three things to know:
 - **Only base types are compared.** `number` matches `NUMBER(12,2)` and `NUMBER(38,0)`; `varchar` matches any length.
   A change of precision is not caught; a change of kind (number to text, date to timestamp) is.
 - **Only `not_null` is a real warehouse rule on Snowflake.** The `not_null` constraint is added to the columns that
-  already have a `not_null` test, and Snowflake rejects a null on insert. Snowflake accepts `unique`, `primary_key`
+  already have a strict `not_null` test, and Snowflake rejects a null on insert. A test with a `where` filter or
+  `severity: warn` means some nulls are allowed (the `-2` Unknown row of `dim_date.full_date`, `fct_sales.unit_cost`
+  for late-arriving products), so those columns get no constraint; the first CI run failed with
+  `NULL result in a non-nullable column` on `dim_date` until this was fixed. Snowflake accepts `unique`, `primary_key`
   and `foreign_key` constraints but never checks them, so the `unique` and `relationships` tests stay.
 - **The incremental fact needs `on_schema_change='fail'`.** dbt does not allow a contract on an incremental model that
   could change its columns silently. A normal run of `fct_sales` merges as before; a shape change stops the run.

@@ -458,7 +458,9 @@ the public interface.
   table of differences (missing, extra or retyped column). CI (`dbt-slim-ci`) builds every changed mart, so
   a break is found in the pull request, not on the dashboard.
 - dbt compares base types only (`NUMBER`, `VARCHAR`, `DATE`, ...); precision and length are not compared.
-- Columns tested `not_null` also carry a `not_null` constraint, which Snowflake enforces on write. Snowflake
+- Columns with a strict `not_null` test (every row, severity error) also carry a `not_null` constraint, which
+  Snowflake enforces on write. Columns that may be null for the Unknown (`-2`) member, such as
+  `dim_date.full_date` and `fct_sales.unit_cost`, keep only their filtered or warning test. Snowflake
   records `unique`, `primary_key` and `foreign_key` constraints but does not enforce them, so uniqueness and
   relationships stay dbt tests.
 - `fct_sales` is incremental and uses `on_schema_change='fail'`, which dbt requires with a contract: a normal
