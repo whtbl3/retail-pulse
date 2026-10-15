@@ -9,6 +9,8 @@ relevant section before changing behavior. When docs disagree with the spec, the
 ## Commands
 
 - `make install`: `uv sync` (dev tools included). Always run Python through `uv run`.
+- `make setup`: first-time machine setup. Asks for the Snowflake account and admin login, writes `.env`,
+  keys, `.dlt/secrets.toml` and `~/.dbt/profiles.yml`. Connects to Snowflake; the user runs it, not Claude.
 - `make up`: start Postgres. Needed by `make test`; without it, DB tests are skipped, not failed.
 - `make test`: pytest. Creates and drops a disposable `<PG_DB>_test` database.
   `tests/test_orchestration.py` also needs `dbt/target/manifest.json` (run `make dbt-parse` once) and a dbt
