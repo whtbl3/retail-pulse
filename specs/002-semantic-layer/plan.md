@@ -8,7 +8,8 @@ Three layers change: dbt (a wide mart model and the MetricFlow definitions), CI 
 Preset (synced metrics and a rebuilt dashboard). Postgres, dlt, Snowflake RAW and Dagster are not
 touched.
 
-**1. One wide model for the metrics to read.** A new mart model `sales_enriched` selects every row
+**1. One wide model for the metrics to read.** Named `fct_sales_enriched` to follow the `fct_`/`dim_`
+convention of §10.2 (owner's choice during the build). A new mart model `fct_sales_enriched` selects every row
 of `fct_sales` and adds the attributes the charts slice by: `full_date`, `store_name`,
 `category_name`, `brand_name`, `promotion_label`, `payment_method_name`. It joins on the fact's
 surrogate keys, so a product or employee attribute is the version that was valid at the time of sale
@@ -25,7 +26,7 @@ dbt-core 1.12 and the current lock). In `dbt/models/semantic/`:
 
 - `dim_date` is declared the time spine (`time_spine` on the model, `granularity: day` on
   `full_date`); MetricFlow refuses to run without one.
-- One semantic model `sales` on `sales_enriched`: entity `sale_line` (`transaction_id || '-' ||
+- One semantic model `sales` on `fct_sales_enriched`: entity `sale_line` (`transaction_id || '-' ||
   line_number`), time dimension `full_date`, categorical dimensions for the other attributes, and the
   measures.
 - The eight metrics of Q2, each with a label and a description:
@@ -47,13 +48,13 @@ No metric filters on status: `fct_sales` only holds `completed` rows (R2).
 `mf validate-configs --skip-dw`, which checks the semantic definitions without a warehouse, and pytest
 compiles every metric with `mf query --explain`. Both run offline: the prototype compiled all metrics
 with the CI profile and dummy credentials. `--skip-dw` does not see columns, so pytest also checks that
-every column a dimension or measure uses is a documented column of `sales_enriched`; `dbt build` in
+every column a dimension or measure uses is a documented column of `fct_sales_enriched`; `dbt build` in
 `dbt-slim-ci` then proves those documented columns exist.
 
 **4. Sync to Preset (Q1, Q3).** `make preset-sync` runs the sync command of the `preset-cli` tool
-(`superset sync dbt-core`) on `dbt/target/manifest.json`, limited to `sales_enriched`. For each metric
+(`superset sync dbt-core`) on `dbt/target/manifest.json`, limited to `fct_sales_enriched`. For each metric
 it calls `mf query --explain`, converts the SQL into one expression, and saves it as a metric on the
-`sales_enriched` dataset. preset-cli pins SQLAlchemy below 2 and the project uses 2.1, so it runs in its
+`fct_sales_enriched` dataset. preset-cli pins SQLAlchemy below 2 and the project uses 2.1, so it runs in its
 own environment through `uvx`, with the project's `.venv/bin` on `PATH` so it finds `mf`. It needs a
 Preset API token in `.env` (`PRESET_API_TOKEN`, `PRESET_API_SECRET`, `PRESET_WORKSPACES`). It does not
 use `--import-db`, so it never writes the dbt transformer's credentials into Preset. Instead it reuses
@@ -62,7 +63,7 @@ the existing `PRESET_READER` connection, found by its current name: a small comm
 `.env` (preset-cli reads `meta.superset.database_name` from the target). Nothing in Preset is renamed.
 
 **5. Dashboard (Q4, R6).** In Preset, the five charts of `RetailPulse Sales Overview` are rebuilt on
-the physical `sales_enriched` dataset with the synced metrics, then the old virtual dataset is
+the physical `fct_sales_enriched` dataset with the synced metrics, then the old virtual dataset is
 deleted. Doing this by hand once is less work than generating chart definitions, and the steps go in
 the phase doc.
 
@@ -71,7 +72,7 @@ the phase doc.
 Done during planning, then removed from the branch:
 
 - `mf query --explain` with the CI profile and dummy credentials, on a semantic model over a draft
-  `sales_enriched`, gave single-table SQL for simple, ratio and derived metrics.
+  `fct_sales_enriched`, gave single-table SQL for simple, ratio and derived metrics.
 - preset-cli 0.3.13's converter turned that SQL into `SUM(net_amount)`,
   `CAST(SUM(gross_profit) AS DOUBLE) / CAST(NULLIF(SUM(net_amount), 0) AS DOUBLE)` and
   `SUM(net_amount) / NULLIF(COUNT(DISTINCT transaction_id), 0)`.
@@ -80,10 +81,10 @@ Done during planning, then removed from the branch:
 
 | File | Change |
 | --- | --- |
-| `dbt/models/marts/sales_enriched.sql` | New: `fct_sales` plus slicing attributes, same grain |
-| `dbt/models/marts/___models.yml` | `sales_enriched` docs and tests; `dim_date` as the time spine |
+| `dbt/models/marts/fct_sales_enriched.sql` | New: `fct_sales` plus slicing attributes, same grain |
+| `dbt/models/marts/___models.yml` | `fct_sales_enriched` docs and tests; `dim_date` as the time spine |
 | `dbt/models/semantic/sales.yml` | New: semantic model and the eight metrics |
-| `dbt/tests/assert_sales_enriched_matches_fct_sales.sql` | New: same row count and same `SUM(net_amount)`, `SUM(gross_profit)` as `fct_sales` |
+| `dbt/tests/assert_fct_sales_enriched_matches_fct_sales.sql` | New: same row count and same `SUM(net_amount)`, `SUM(gross_profit)` as `fct_sales` |
 | `pyproject.toml`, `uv.lock` | Add `dbt-metricflow` to the dev group |
 | `.github/workflows/ci.yml` | `mf validate-configs --skip-dw` after `dbt parse` in the `test` job |
 | `tests/test_semantic_layer.py` | New: metric list, labels, ratio of sums, single-table SQL |
@@ -102,7 +103,7 @@ Done during planning, then removed from the branch:
   SQLAlchemy. It runs only on the owner's machine through `uvx`, is never imported by project code, and
   can be replaced by typing the eight metric expressions in Preset if it breaks.
 - **Sync overwrites dataset metrics:** dbt is the source of truth, so metrics added by hand in Preset
-  on `sales_enriched` are replaced. The phase doc says so.
+  on `fct_sales_enriched` are replaced. The phase doc says so.
 - **Metric names that match column names** (`discount_amount`, `gross_profit`): to be checked when
   `mf validate-configs` runs; if MetricFlow rejects them, the measures get a suffix and the metric
   names stay.
@@ -113,10 +114,10 @@ Done during planning, then removed from the branch:
 
 | Acceptance criterion | Proved by |
 | --- | --- |
-| AC1 | CI `mf validate-configs --skip-dw`; pytest that every column used by the semantic model is a documented column of `sales_enriched` (a test feeds it an unknown column and expects a failure) |
-| AC2 | pytest: `net_revenue` compiles to `SUM(net_amount)` on `sales_enriched`; dbt test: `sales_enriched` total equals `fct_sales` |
+| AC1 | CI `mf validate-configs --skip-dw`; pytest that every column used by the semantic model is a documented column of `fct_sales_enriched` (a test feeds it an unknown column and expects a failure) |
+| AC2 | pytest: `net_revenue` compiles to `SUM(net_amount)` on `fct_sales_enriched`; dbt test: `fct_sales_enriched` total equals `fct_sales` |
 | AC3 | pytest: `gross_margin` compiles to `SUM(gross_profit) / SUM(net_amount)`, not an average |
-| AC4 | `sales_enriched` joins on `product_key`, the SCD2 version key; dbt test on row count and totals; manual check of one product whose cost changed |
+| AC4 | `fct_sales_enriched` joins on `product_key`, the SCD2 version key; dbt test on row count and totals; manual check of one product whose cost changed |
 | AC5 | Manual: open each chart in Preset, metric is a saved metric |
 | AC6 | Manual: add a temporary metric, `make preset-sync`, it appears in Preset; then remove it |
 | AC7 | Manual: rerun the reconciliation table in docs/phases/07-preset.md |
@@ -124,7 +125,7 @@ Done during planning, then removed from the branch:
 ## Docs to update
 
 - Project-Spec: §4 (MetricFlow in the stack), §5 (semantic layer in the diagram), §10.2 (the
-  `sales_enriched` row), §10.3 (ratios live in the semantic layer), §12 (metrics come from dbt), §14
+  `fct_sales_enriched` row), §10.3 (ratios live in the semantic layer), §12 (metrics come from dbt), §14
   (phase 11), §15 (`dbt/models/semantic/`), §17 (the three decisions of the spec, marked Final).
 - New `docs/phases/11-semantic-layer.md` and a row in `docs/README.md`: what a semantic layer is, how to
   add a metric, how to sync, and the one-time Preset steps.
