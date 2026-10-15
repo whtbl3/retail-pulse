@@ -1,4 +1,4 @@
--- One row per store, as in the OLTP table; ids renamed to *_id. No history: stores are Type 1 (spec §10.2).
+-- One row per store, as in the OLTP table; ids renamed to *_id. No history: stores are Type 1 (spec §17).
 select
     id as store_id,
     store_name,
