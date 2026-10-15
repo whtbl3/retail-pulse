@@ -37,8 +37,12 @@ Before calling a change done, run `make check` and show the output.
 
 ## Ask, do not guess
 
-- When the user's intent, a requirement or a choice between options is unclear, ask before acting:
-  one short question, the options, and your recommendation. Do not fill the gap with an assumption.
+- When the user's intent, a requirement or a choice between options is unclear, ask before acting.
+  Do not fill the gap with an assumption.
+- Every question to the user is multiple choice: one short question, 2 to 4 concrete options with a
+  one-line consequence each, your recommendation marked, and always a last option
+  **Others: let's discuss** so the user can talk it through instead of picking. Use a selectable
+  question UI when the tool offers one (for example `AskUserQuestion`); otherwise a numbered list.
 - Before stating a fact about an external tool (version support, licence, price, plan, auth method,
   default behavior), check its current docs or source code. If you could not check it, say so
   plainly and ask, instead of presenting a guess as fact.
