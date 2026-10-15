@@ -1,4 +1,4 @@
-"""Build a Preset dataset import ZIP that carries the MetricFlow metrics (spec 002).
+"""Build a Preset dataset import ZIP that carries the MetricFlow metrics (specs 002 and 004).
 
 The Preset free plan has no API, so the metrics reach Preset through Data > Datasets > Import.
 `make preset-zip EXPORT=<zip>` runs this module:
@@ -9,8 +9,14 @@ The Preset free plan has no API, so the metrics reach Preset through Data > Data
    with the same uuid and never overwrites it during a dataset import.
 2. It asks MetricFlow for each metric's SQL (`mf query --explain`) and reduces it to one expression,
    for example `SUM(net_amount)`. Superset stores a dataset metric as one expression on one table.
-3. It writes `dbt/target/preset_fct_sales_enriched.zip` with the `fct_sales_enriched` dataset and
-   its metrics. The dataset uuid is fixed, so importing again updates the same dataset.
+3. It writes `dbt/target/preset_datasets.zip` with one dataset per semantic model
+   (`fct_sales_enriched`, `fct_store_headcount_monthly`), each with the metrics of its semantic
+   model. Dataset uuids are fixed, so importing again updates the same datasets.
+
+A semi-additive metric (a measure with `non_additive_dimension`, such as closing headcount) cannot
+be one expression: MetricFlow keeps only the last month with a join. It goes to Preset as its plain
+aggregate, `SUM(closing_headcount)`, with a warning text that Preset shows next to the metric:
+correct only when the chart is grouped by month (spec 004, R7).
 
 The export contains the account in the connection string (password masked). It is never committed.
 """
@@ -25,6 +31,7 @@ import subprocess
 import sys
 import uuid
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import sqlglot
@@ -33,13 +40,51 @@ from sqlglot import exp
 
 REPO = Path(__file__).parents[3]
 DBT_DIR = REPO / "dbt"
-MODEL = "fct_sales_enriched"
 SCHEMA = "MARTS"
-TIME_COLUMN = "full_date"
-# Fixed so that every import updates the same Preset dataset instead of creating a new one
-DATASET_UUID = str(uuid.uuid5(uuid.NAMESPACE_URL, f"retail-pulse/{MODEL}"))
-OUTPUT = DBT_DIR / "target" / f"preset_{MODEL}.zip"
+OUTPUT = DBT_DIR / "target" / "preset_datasets.zip"
 ROOT = "retail_pulse_metrics"
+SEMI_ADDITIVE_WARNING = (
+    "Semi-additive: sums across stores only. "
+    "Always group by month; never total over several months."
+)
+
+
+@dataclass(frozen=True)
+class Dataset:
+    """A Preset dataset: one dbt model, holding the metrics of one semantic model."""
+
+    semantic_model: str
+    model: str
+    time_column: str
+    time_columns: frozenset[str]
+    description: str
+
+    @property
+    def uuid(self) -> str:
+        # Fixed so that every import updates the same Preset dataset instead of creating a new one
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"retail-pulse/{self.model}"))
+
+
+DATASETS = (
+    Dataset(
+        "sales",
+        "fct_sales_enriched",
+        "full_date",
+        frozenset({"full_date", "transaction_ts"}),
+        "Completed sales line items with dimension attributes (dbt model fct_sales_enriched). "
+        "Metrics come from dbt/models/semantic/sales.yml; edit them there, not in Preset.",
+    ),
+    Dataset(
+        "store_headcount",
+        "fct_store_headcount_monthly",
+        "month_start",
+        frozenset({"month_start", "as_of_date"}),
+        "Store x month headcount snapshot (dbt model fct_store_headcount_monthly). Headcount is "
+        "semi-additive: never sum it over months. Metrics come from "
+        "dbt/models/semantic/headcount.yml; edit them there, not in Preset.",
+    ),
+)
+DATASET_UUID = DATASETS[0].uuid
 
 
 def profiles_dir(dbt_dir: Path = DBT_DIR, env: dict[str, str] | None = None) -> Path:
@@ -84,7 +129,7 @@ def to_expression(sql: str) -> str:
     """
     tree = sqlglot.parse_one(sql, dialect="snowflake")
     if list(tree.find_all(exp.Join)):
-        raise ValueError("metric SQL has a JOIN; define the metric on fct_sales_enriched only")
+        raise ValueError("metric SQL has a JOIN; define the metric on one model only")
     if tree.args.get("where") or tree.args.get("group"):
         raise ValueError("metric SQL has a filter or a GROUP BY, which one expression cannot hold")
     if len(tree.expressions) != 1:
@@ -109,19 +154,56 @@ def to_expression(sql: str) -> str:
     return expression.sql(dialect="snowflake")
 
 
+def load_semantic_manifest(dbt_dir: Path = DBT_DIR) -> dict:
+    return json.loads((dbt_dir / "target" / "semantic_manifest.json").read_text())
+
+
 def load_metrics(dbt_dir: Path = DBT_DIR) -> list[dict]:
-    manifest = json.loads((dbt_dir / "target" / "semantic_manifest.json").read_text())
-    return sorted(manifest["metrics"], key=lambda m: m["name"])
+    return sorted(load_semantic_manifest(dbt_dir)["metrics"], key=lambda m: m["name"])
 
 
-def load_columns(dbt_dir: Path = DBT_DIR) -> dict[str, str]:
+def measures_by_name(semantic_manifest: dict) -> dict[str, tuple[str, dict]]:
+    """Measure name to (semantic model name, measure)."""
+    return {
+        measure["name"]: (model["name"], measure)
+        for model in semantic_manifest["semantic_models"]
+        for measure in model["measures"]
+    }
+
+
+def semantic_model_of(metric: dict, measures: dict[str, tuple[str, dict]]) -> str:
+    """The one semantic model a metric's measures come from; Preset cannot join two datasets."""
+    models = {measures[m["name"]][0] for m in metric["type_params"]["input_measures"]}
+    if len(models) != 1:
+        raise ValueError(f"metric {metric['name']} uses several semantic models: {sorted(models)}")
+    return models.pop()
+
+
+def semi_additive_expression(metric: dict, measures: dict[str, tuple[str, dict]]) -> str | None:
+    """`SUM(column)` for a simple metric on a semi-additive measure, else None."""
+    inputs = metric["type_params"]["input_measures"]
+    if not any(measures[m["name"]][1].get("non_additive_dimension") for m in inputs):
+        return None
+    if metric["type"] != "simple":
+        raise ValueError(
+            f"metric {metric['name']} builds on a semi-additive measure; only simple metrics "
+            "on one can be exported"
+        )
+    [measure_input] = inputs
+    measure = measures[measure_input["name"]][1]
+    return f"{measure['agg'].upper()}({measure.get('expr') or measure['name']})"
+
+
+def load_columns(model: str, dbt_dir: Path = DBT_DIR) -> dict[str, str]:
     """Column name to description, from the model's entry in ___models.yml."""
     manifest = json.loads((dbt_dir / "target" / "manifest.json").read_text())
-    node = manifest["nodes"][f"model.retail_pulse.{MODEL}"]
+    node = manifest["nodes"][f"model.retail_pulse.{model}"]
     return {name: col.get("description") or "" for name, col in node["columns"].items()}
 
 
-def superset_metrics(metrics: list[dict], expressions: dict[str, str]) -> list[dict]:
+def superset_metrics(
+    metrics: list[dict], expressions: dict[str, str], dataset: Dataset, warnings: dict[str, str]
+) -> list[dict]:
     return [
         {
             "metric_name": m["name"],
@@ -131,15 +213,15 @@ def superset_metrics(metrics: list[dict], expressions: dict[str, str]) -> list[d
             "description": m["description"],
             "d3format": None,
             "extra": {},
-            "warning_text": None,
-            "uuid": str(uuid.uuid5(uuid.UUID(DATASET_UUID), m["name"])),
+            "warning_text": warnings.get(m["name"]),
+            "uuid": str(uuid.uuid5(uuid.UUID(dataset.uuid), m["name"])),
         }
         for m in metrics
     ]
 
 
-def superset_columns(columns: dict[str, str]) -> list[dict]:
-    is_time = {TIME_COLUMN, "transaction_ts"}
+def superset_columns(columns: dict[str, str], dataset: Dataset) -> list[dict]:
+    is_time = dataset.time_columns
     return [
         {
             "column_name": name.upper(),
@@ -200,8 +282,10 @@ NOT_COPIED = (
 REQUIRED_BOOLEANS = ("normalize_columns", "always_filter_main_dttm")
 
 
-def build_dataset(template: dict, database: dict, metrics: list[dict], columns: list[dict]) -> dict:
-    """The fct_sales_enriched dataset, shaped like the owner's export.
+def build_dataset(
+    template: dict, database: dict, metrics: list[dict], columns: list[dict], spec: Dataset
+) -> dict:
+    """One dataset, shaped like the owner's export.
 
     It keeps the export's keys and general settings (cache timeout, catalog...), so it matches the
     owner's Preset version; Superset rejects null in fields such as normalize_columns.
@@ -215,20 +299,16 @@ def build_dataset(template: dict, database: dict, metrics: list[dict], columns: 
             dataset[key] = False
     dataset.update(
         {
-            "table_name": MODEL.upper(),
-            "main_dttm_col": TIME_COLUMN.upper(),
-            "description": (
-                "Completed sales line items with dimension attributes (dbt model "
-                "fct_sales_enriched). Metrics come from dbt/models/semantic/sales.yml; edit them "
-                "there, not in Preset."
-            ),
+            "table_name": spec.model.upper(),
+            "main_dttm_col": spec.time_column.upper(),
+            "description": spec.description,
             "schema": SCHEMA,
             "sql": None,
             "params": None,
             "template_params": None,
             "filter_select_enabled": True,
             "extra": None,
-            "uuid": DATASET_UUID,
+            "uuid": spec.uuid,
             "metrics": metrics,
             "columns": columns,
             "version": template.get("version", "1.0.0"),
@@ -241,32 +321,53 @@ def build_dataset(template: dict, database: dict, metrics: list[dict], columns: 
 
 
 def write_bundle(
-    out: Path, metadata: str, db_file: str, database: dict, dataset: dict, db_folder: str
+    out: Path, metadata: str, db_file: str, database: dict, datasets: list[dict], db_folder: str
 ) -> None:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
         bundle.writestr(f"{ROOT}/metadata.yaml", metadata)
         bundle.writestr(f"{ROOT}/{db_file}", yaml.safe_dump(database, sort_keys=False))
-        bundle.writestr(
-            f"{ROOT}/datasets/{db_folder}/{MODEL.upper()}.yaml",
-            yaml.safe_dump(dataset, sort_keys=False, allow_unicode=True),
-        )
+        for dataset in datasets:
+            bundle.writestr(
+                f"{ROOT}/datasets/{db_folder}/{dataset['table_name']}.yaml",
+                yaml.safe_dump(dataset, sort_keys=False, allow_unicode=True),
+            )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(buffer.getvalue())
 
 
 def build(export: Path, out: Path = OUTPUT, dbt_dir: Path = DBT_DIR, compile_sql=explain) -> Path:
     metadata, db_file, database, template = read_export(export)
-    metrics = load_metrics(dbt_dir)
-    expressions = {m["name"]: to_expression(compile_sql(m["name"])) for m in metrics}
-    dataset = build_dataset(
-        template,
-        database,
-        superset_metrics(metrics, expressions),
-        superset_columns(load_columns(dbt_dir)),
-    )
+    semantic_manifest = load_semantic_manifest(dbt_dir)
+    measures = measures_by_name(semantic_manifest)
+    metrics = sorted(semantic_manifest["metrics"], key=lambda m: m["name"])
+    expressions, warnings = {}, {}
+    for metric in metrics:
+        plain = semi_additive_expression(metric, measures)
+        if plain is None:
+            expressions[metric["name"]] = to_expression(compile_sql(metric["name"]))
+        else:
+            expressions[metric["name"]] = plain
+            warnings[metric["name"]] = SEMI_ADDITIVE_WARNING
+    datasets = []
+    for spec in DATASETS:
+        mine = [m for m in metrics if semantic_model_of(m, measures) == spec.semantic_model]
+        datasets.append(
+            build_dataset(
+                template,
+                database,
+                superset_metrics(mine, expressions, spec, warnings),
+                superset_columns(load_columns(spec.model, dbt_dir), spec),
+                spec,
+            )
+        )
+    unplaced = {m["name"] for m in metrics} - {
+        m["metric_name"] for d in datasets for m in d["metrics"]
+    }
+    if unplaced:
+        raise ValueError(f"metrics on a semantic model with no Preset dataset: {sorted(unplaced)}")
     db_folder = PurePosixPath(db_file).stem
-    write_bundle(out, metadata, db_file, database, dataset, db_folder)
+    write_bundle(out, metadata, db_file, database, datasets, db_folder)
     return out
 
 

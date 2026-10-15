@@ -363,3 +363,115 @@ models:
         description: quantity × unit_cost at the time of sale. Additive.
       - name: gross_profit
         description: net_amount − cost_amount. Additive.
+  - name: fct_store_headcount_monthly
+    description: >
+      Periodic snapshot fact (spec 004): one row per store per calendar month, from January 2020 to the
+      current month, including months with no staff or no sales. Headcount comes from employee history
+      (int_employee_daily_store, state at the end of each local day); net revenue from fct_sales.
+      closing_headcount = opening_headcount + joiners + transfers_in - leavers - transfers_out.
+      HEADCOUNT IS SEMI-ADDITIVE: sum it across stores, never across months; for several months use the
+      closing headcount of the last month (the semantic-layer metric closing_headcount does this).
+      Revenue per employee is the semantic-layer metric revenue_per_employee, not a column.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [store_id, month_start]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "closing_headcount = opening_headcount + joiners + transfers_in - leavers - transfers_out"
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "opening_headcount >= 0 and closing_headcount >= 0"}
+    columns:
+      - name: store_key
+        description: Store surrogate key (dim_store). The -2 Unknown member has no rows.
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_store'), field: store_key}}
+      - name: store_id
+        description: Source store ID.
+        data_tests:
+          - not_null
+      - name: store_name
+        description: Store name, copied from dim_store so Preset can group without a join.
+      - name: month_start
+        description: First day of the calendar month (local time).
+        data_tests:
+          - not_null
+      - name: month_start_date_key
+        description: date_key of month_start in dim_date (YYYYMMDD).
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: date_key}}
+      - name: opening_headcount
+        description: Employees employed at the store at the end of the day before the month starts; equals the previous month's closing_headcount. Semi-additive, never sum over months.
+      - name: closing_headcount
+        description: Employees employed at the store at the end of the month's last day (of the as-of day for the current month). Someone whose last working day is the month's last day has left and is not counted. Semi-additive, never sum over months.
+      - name: joiners
+        description: Employees whose start_date is in the month, at their store at the end of that day. Additive.
+      - name: leavers
+        description: Employees whose end_date (last working day) is in the month, at their store on that day. Additive.
+      - name: transfers_in
+        description: Moves into the store during the month by employed staff, from employee history. Additive.
+      - name: transfers_out
+        description: Moves out of the store during the month by employed staff. Additive.
+      - name: average_headcount
+        description: (opening_headcount + closing_headcount) / 2, the denominator of revenue_per_employee. Summed over several rows it gives employee-months.
+      - name: net_revenue
+        description: Net amount of completed sales at the store in the month (local date), from fct_sales; 0 when there were none. Additive.
+      - name: is_month_closed
+        description: FALSE only for the current month, whose values are as of as_of_date and still change.
+        data_tests:
+          - not_null
+      - name: as_of_date
+        description: The local day the snapshot was built for; the current month's values are as of the end of this day.
+        data_tests:
+          - not_null
+
+unit_tests:
+  - name: headcount_snapshot_counts_movements_by_store_and_month
+    description: >
+      Spec 004 worked case. Store 1 starts January with 1 and 3; 3 leaves on 2020-01-20; 2 joins
+      store 2 on 2020-01-05; 1 moves from store 1 to store 2 on 2020-02-10. The as-of day is
+      2020-02-15, so February is not closed. Store 3 never has staff or sales and still has rows of
+      zeros. The -2 Unknown store gets no rows.
+    model: fct_store_headcount_monthly
+    overrides:
+      vars:
+        date_start: "2020-01-01"
+        headcount_as_of: "2020-02-15"
+    given:
+      - input: ref('int_employee_daily_store')
+        rows:
+          - {employee_id: 1, calendar_date: "2019-12-31", is_employed: true, store_id: 1, prev_is_employed: null, prev_store_id: null}
+          - {employee_id: 3, calendar_date: "2019-12-31", is_employed: true, store_id: 1, prev_is_employed: null, prev_store_id: null}
+          - {employee_id: 2, calendar_date: "2020-01-05", is_employed: true, store_id: 2, prev_is_employed: false, prev_store_id: 2}
+          - {employee_id: 3, calendar_date: "2020-01-20", is_employed: false, store_id: 1, prev_is_employed: true, prev_store_id: 1}
+          - {employee_id: 1, calendar_date: "2020-01-31", is_employed: true, store_id: 1, prev_is_employed: true, prev_store_id: 1}
+          - {employee_id: 2, calendar_date: "2020-01-31", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 2}
+          - {employee_id: 1, calendar_date: "2020-02-10", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 1}
+          - {employee_id: 1, calendar_date: "2020-02-15", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 2}
+          - {employee_id: 2, calendar_date: "2020-02-15", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 2}
+      - input: ref('dim_store')
+        rows:
+          - {store_key: 101, store_id: 1, store_name: "Store 1"}
+          - {store_key: 102, store_id: 2, store_name: "Store 2"}
+          - {store_key: 103, store_id: 3, store_name: "Store 3"}
+          - {store_key: -2, store_id: -2, store_name: "Unknown"}
+      - input: ref('fct_sales')
+        rows:
+          - {store_key: 101, date_key: 20200115, net_amount: 100.00}
+          - {store_key: 102, date_key: 20200210, net_amount: 30.00}
+          - {store_key: 102, date_key: 20200214, net_amount: 20.00}
+      - input: ref('dim_date')
+        rows:
+          - {date_key: 20200115, full_date: "2020-01-15"}
+          - {date_key: 20200210, full_date: "2020-02-10"}
+          - {date_key: 20200214, full_date: "2020-02-14"}
+    expect:
+      rows:
+        - {store_id: 1, month_start: "2020-01-01", opening_headcount: 2, closing_headcount: 1, joiners: 0, leavers: 1, transfers_in: 0, transfers_out: 0, average_headcount: 1.5, net_revenue: 100.00, is_month_closed: true, as_of_date: "2020-02-15"}
+        - {store_id: 2, month_start: "2020-01-01", opening_headcount: 0, closing_headcount: 1, joiners: 1, leavers: 0, transfers_in: 0, transfers_out: 0, average_headcount: 0.5, net_revenue: 0, is_month_closed: true, as_of_date: "2020-02-15"}
+        - {store_id: 3, month_start: "2020-01-01", opening_headcount: 0, closing_headcount: 0, joiners: 0, leavers: 0, transfers_in: 0, transfers_out: 0, average_headcount: 0, net_revenue: 0, is_month_closed: true, as_of_date: "2020-02-15"}
+        - {store_id: 1, month_start: "2020-02-01", opening_headcount: 1, closing_headcount: 0, joiners: 0, leavers: 0, transfers_in: 0, transfers_out: 1, average_headcount: 0.5, net_revenue: 0, is_month_closed: false, as_of_date: "2020-02-15"}
+        - {store_id: 2, month_start: "2020-02-01", opening_headcount: 1, closing_headcount: 2, joiners: 0, leavers: 0, transfers_in: 1, transfers_out: 0, average_headcount: 1.5, net_revenue: 50.00, is_month_closed: false, as_of_date: "2020-02-15"}
+        - {store_id: 3, month_start: "2020-02-01", opening_headcount: 0, closing_headcount: 0, joiners: 0, leavers: 0, transfers_in: 0, transfers_out: 0, average_headcount: 0, net_revenue: 0, is_month_closed: false, as_of_date: "2020-02-15"}

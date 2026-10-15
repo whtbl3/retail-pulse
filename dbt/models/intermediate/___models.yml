@@ -76,3 +76,87 @@ models:
         description: TRUE for the current version.
         data_tests:
           - not_null
+
+  - name: int_employee_daily_store
+    description: >
+      One row per employee per local calendar day (spec 004), with the employee's state at the END of the
+      day: employed or not, and the store from int_employee_scd2 at the instant the day ends (local
+      midnight). Days run from the day before date_start to today in local time. The previous day's state
+      (prev_is_employed, prev_store_id) is on the same row, so fct_store_headcount_monthly counts joiners,
+      leavers and transfers as day-to-day changes. An employee whose end_date is day d is not employed at
+      the end of d (d is the day they leave).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - employee_id
+              - calendar_date
+    columns:
+      - name: employee_id
+        description: Employee ID (natural key).
+        data_tests:
+          - not_null
+      - name: calendar_date
+        description: Local calendar day (local_tz).
+        data_tests:
+          - not_null
+      - name: is_employed
+        description: TRUE when start_date <= calendar_date and end_date is null or after calendar_date.
+        data_tests:
+          - not_null
+      - name: store_id
+        description: Store the employee is assigned to at the end of the day, by employee history; set on days they are not employed too.
+        data_tests:
+          - not_null
+      - name: prev_is_employed
+        description: is_employed on the day before; null on the first day.
+      - name: prev_store_id
+        description: store_id on the day before; null on the first day.
+
+unit_tests:
+  - name: employee_daily_state_is_taken_at_the_end_of_each_local_day
+    description: >
+      Spec 004 edge cases. Days 2020-01-31 to 2020-02-02 (date_start 2020-02-01). 1 joins on 2020-02-01.
+      2 leaves on 2020-02-01, its last working day, so it is not employed at the end of it. 3 moves at
+      23:30 local on 2020-02-01, before the day ends. 4 moves at 00:30 local on 2020-02-02 (still
+      2020-02-01 in UTC), so the move counts on 2020-02-02. 5 left on 2020-01-31 and is moved later:
+      it is never employed in these days. 6 joins on 2020-02-01 and is moved the same day at 10:00
+      local: one joiner at the end-of-day store 2, no transfer.
+    model: int_employee_daily_store
+    overrides:
+      vars:
+        date_start: "2020-02-01"
+        headcount_as_of: "2020-02-02"
+    given:
+      - input: ref('int_employee_scd2')
+        rows:
+          - {employee_id: 1, store_id: 1, start_date: "2020-02-01", end_date: null, valid_from: "1900-01-01 00:00:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+          - {employee_id: 2, store_id: 1, start_date: "2019-05-01", end_date: "2020-02-01", valid_from: "1900-01-01 00:00:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+          - {employee_id: 3, store_id: 1, start_date: "2019-05-01", end_date: null, valid_from: "1900-01-01 00:00:00 +0000", valid_to: "2020-02-01 16:30:00 +0000"}
+          - {employee_id: 3, store_id: 2, start_date: "2019-05-01", end_date: null, valid_from: "2020-02-01 16:30:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+          - {employee_id: 4, store_id: 1, start_date: "2019-05-01", end_date: null, valid_from: "1900-01-01 00:00:00 +0000", valid_to: "2020-02-01 17:30:00 +0000"}
+          - {employee_id: 4, store_id: 2, start_date: "2019-05-01", end_date: null, valid_from: "2020-02-01 17:30:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+          - {employee_id: 5, store_id: 1, start_date: "2019-05-01", end_date: "2020-01-31", valid_from: "1900-01-01 00:00:00 +0000", valid_to: "2020-02-01 05:00:00 +0000"}
+          - {employee_id: 5, store_id: 2, start_date: "2019-05-01", end_date: "2020-01-31", valid_from: "2020-02-01 05:00:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+          - {employee_id: 6, store_id: 1, start_date: "2020-02-01", end_date: null, valid_from: "1900-01-01 00:00:00 +0000", valid_to: "2020-02-01 03:00:00 +0000"}
+          - {employee_id: 6, store_id: 2, start_date: "2020-02-01", end_date: null, valid_from: "2020-02-01 03:00:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+    expect:
+      rows:
+        - {employee_id: 1, calendar_date: "2020-01-31", is_employed: false, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 1, calendar_date: "2020-02-01", is_employed: true, store_id: 1, prev_is_employed: false, prev_store_id: 1}
+        - {employee_id: 1, calendar_date: "2020-02-02", is_employed: true, store_id: 1, prev_is_employed: true, prev_store_id: 1}
+        - {employee_id: 2, calendar_date: "2020-01-31", is_employed: true, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 2, calendar_date: "2020-02-01", is_employed: false, store_id: 1, prev_is_employed: true, prev_store_id: 1}
+        - {employee_id: 2, calendar_date: "2020-02-02", is_employed: false, store_id: 1, prev_is_employed: false, prev_store_id: 1}
+        - {employee_id: 3, calendar_date: "2020-01-31", is_employed: true, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 3, calendar_date: "2020-02-01", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 1}
+        - {employee_id: 3, calendar_date: "2020-02-02", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 2}
+        - {employee_id: 4, calendar_date: "2020-01-31", is_employed: true, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 4, calendar_date: "2020-02-01", is_employed: true, store_id: 1, prev_is_employed: true, prev_store_id: 1}
+        - {employee_id: 4, calendar_date: "2020-02-02", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 1}
+        - {employee_id: 5, calendar_date: "2020-01-31", is_employed: false, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 5, calendar_date: "2020-02-01", is_employed: false, store_id: 2, prev_is_employed: false, prev_store_id: 1}
+        - {employee_id: 5, calendar_date: "2020-02-02", is_employed: false, store_id: 2, prev_is_employed: false, prev_store_id: 2}
+        - {employee_id: 6, calendar_date: "2020-01-31", is_employed: false, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 6, calendar_date: "2020-02-01", is_employed: true, store_id: 2, prev_is_employed: false, prev_store_id: 1}
+        - {employee_id: 6, calendar_date: "2020-02-02", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 2}
