@@ -93,9 +93,11 @@ Out of scope:
 
 ## Answers to open questions
 
-- **Q1 How metrics reach Preset:** dbt Core only. A command in the repo syncs the metric definitions
-  into the Preset dataset as saved metrics; Preset does not query MetricFlow live. No paid service.
+- **Q1 How metrics reach Preset:** dbt Core only, no paid service. The first answer was a sync
+  through the Preset API; during the build the API turned out to be Enterprise only, and the owner
+  chose instead a ZIP that the repo builds and the owner imports in Preset (Data > Datasets > Import).
+  Preset does not query MetricFlow live.
 - **Q2 First metrics:** the five on the dashboard (`net_revenue`, `gross_revenue`, `discount_amount`,
   `gross_profit`, `quantity_sold`) plus `gross_margin`, `transaction_count` and `average_basket_value`.
-- **Q3 When to sync:** by hand, with one `make` command run after a metric definition changes.
+- **Q3 When to sync:** by hand: `make preset-zip`, then import the ZIP, after a metric changes.
 - **Q4 Existing dashboard:** rebuilt so every chart uses the shared metrics (R6).

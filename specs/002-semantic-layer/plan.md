@@ -51,16 +51,22 @@ with the CI profile and dummy credentials. `--skip-dw` does not see columns, so 
 every column a dimension or measure uses is a documented column of `fct_sales_enriched`; `dbt build` in
 `dbt-slim-ci` then proves those documented columns exist.
 
-**4. Sync to Preset (Q1, Q3).** `make preset-sync` runs the sync command of the `preset-cli` tool
-(`superset sync dbt-core`) on `dbt/target/manifest.json`, limited to `fct_sales_enriched`. For each metric
-it calls `mf query --explain`, converts the SQL into one expression, and saves it as a metric on the
-`fct_sales_enriched` dataset. preset-cli pins SQLAlchemy below 2 and the project uses 2.1, so it runs in its
-own environment through `uvx`, with the project's `.venv/bin` on `PATH` so it finds `mf`. It needs a
-Preset API token in `.env` (`PRESET_API_TOKEN`, `PRESET_API_SECRET`, `PRESET_WORKSPACES`). It does not
-use `--import-db`, so it never writes the dbt transformer's credentials into Preset. Instead it reuses
-the existing `PRESET_READER` connection, found by its current name: a small committed profile,
-`dbt/preset/profiles.yml`, holds no credentials and sets that name from `PRESET_DATABASE_NAME` in
-`.env` (preset-cli reads `meta.superset.database_name` from the target). Nothing in Preset is renamed.
+**4. Getting the metrics into Preset (Q1, Q3).** Changed during the build: the plan first used the
+`preset-cli` sync command, but it needs the Preset API, which only the Enterprise plan has ("The Preset
+API is only available for the Enterprise plan", api-docs.preset.io; the free tier lists no "API
+access", docs.preset.io/docs/free-tier-limits). The owner chose a ZIP import instead:
+
+- `make preset-zip EXPORT=<zip>` builds `dbt/target/preset_fct_sales_enriched.zip`. The input is a
+  dataset export the owner downloads once from Preset (Data > Datasets > select a dataset > Export).
+  From it the command copies `metadata.yaml` and the database file unchanged, so the bundle matches the
+  owner's Preset version and points at the existing `PRESET_READER` connection. Superset's dataset
+  importer calls `import_database(config, overwrite=False)`, which returns the existing database when
+  the uuid matches (`superset/commands/dataset/importers/v1/__init__.py`), so the connection and its
+  password are never changed.
+- Each metric's SQL comes from `mf query --explain` and is reduced to one expression with sqlglot,
+  the same reduction preset-cli does; derived metrics get their subquery aliases inlined.
+- The dataset uuid is fixed (uuid5 of the model name), so importing a new ZIP updates the same dataset.
+- The owner imports it in Preset (Data > Datasets > Import). No API key, no new secret.
 
 **5. Dashboard (Q4, R6).** In Preset, the five charts of `RetailPulse Sales Overview` are rebuilt on
 the physical `fct_sales_enriched` dataset with the synced metrics, then the old virtual dataset is
@@ -88,9 +94,9 @@ Done during planning, then removed from the branch:
 | `pyproject.toml`, `uv.lock` | Add `dbt-metricflow` to the dev group |
 | `.github/workflows/ci.yml` | `mf validate-configs --skip-dw` after `dbt parse` in the `test` job |
 | `tests/test_semantic_layer.py` | New: metric list, labels, ratio of sums, single-table SQL |
-| `dbt/preset/profiles.yml` | New: target type and Preset database name only, no credentials |
-| `Makefile` | `preset-sync` target |
-| `.env.example` | `PRESET_API_TOKEN`, `PRESET_API_SECRET`, `PRESET_WORKSPACES`, `PRESET_DATABASE_NAME` |
+| `src/retail_pulse/semantic/preset_export.py` | New: builds the Preset import ZIP |
+| `tests/test_preset_export.py` | New: expression reduction, bundle content, stable uuids, bad exports |
+| `Makefile` | `preset-zip` target |
 
 ## Risks and rollback
 
@@ -99,11 +105,11 @@ Done during planning, then removed from the branch:
 - **Fan-out or dropped rows in the wide model:** every fact key is non-null (`-1`/`-2` members exist
   in every dimension), so inner joins neither drop nor duplicate rows. A dbt test compares row count
   and totals with `fct_sales` and fails the build if they differ.
-- **preset-cli** is a separate tool with an unusual licence ("Other/Proprietary" on PyPI) and old
-  SQLAlchemy. It runs only on the owner's machine through `uvx`, is never imported by project code, and
-  can be replaced by typing the eight metric expressions in Preset if it breaks.
-- **Sync overwrites dataset metrics:** dbt is the source of truth, so metrics added by hand in Preset
-  on `fct_sales_enriched` are replaced. The phase doc says so.
+- **Import format drift:** the bundle copies `metadata.yaml`, the database file and the dataset keys
+  from the owner's own export, so it follows their Preset version. If an import still fails, the error
+  names the field; the metrics can also be typed by hand from `make preset-zip` output as a fallback.
+- **Import overwrites dataset metrics:** dbt is the source of truth, so metrics added by hand in
+  Preset on `fct_sales_enriched` are replaced. The phase doc says so.
 - **Metric names that match column names** (`discount_amount`, `gross_profit`): to be checked when
   `mf validate-configs` runs; if MetricFlow rejects them, the measures get a suffix and the metric
   names stay.
@@ -119,7 +125,7 @@ Done during planning, then removed from the branch:
 | AC3 | pytest: `gross_margin` compiles to `SUM(gross_profit) / SUM(net_amount)`, not an average |
 | AC4 | `fct_sales_enriched` joins on `product_key`, the SCD2 version key; dbt test on row count and totals; manual check of one product whose cost changed |
 | AC5 | Manual: open each chart in Preset, metric is a saved metric |
-| AC6 | Manual: add a temporary metric, `make preset-sync`, it appears in Preset; then remove it |
+| AC6 | pytest: a metric in the semantic manifest appears in the bundle; manual: add a temporary metric, `make preset-zip`, import, it appears in Preset; then remove it |
 | AC7 | Manual: rerun the reconciliation table in docs/phases/07-preset.md |
 
 ## Docs to update
@@ -130,4 +136,4 @@ Done during planning, then removed from the branch:
 - New `docs/phases/11-semantic-layer.md` and a row in `docs/README.md`: what a semantic layer is, how to
   add a metric, how to sync, and the one-time Preset steps.
 - `docs/phases/07-preset.md`: a note that the virtual dataset was replaced in phase 11.
-- `make help` and `CLAUDE.md` (`make preset-sync`: talks to Preset, the user runs it).
+- `make help` and `CLAUDE.md` (`make preset-zip`).
