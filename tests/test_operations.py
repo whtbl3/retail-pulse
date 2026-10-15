@@ -7,9 +7,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dagster import AssetCheckSeverity, AssetKey, RetryRequested, build_asset_context
+from dagster import (
+    AssetCheckSeverity,
+    AssetKey,
+    MaterializeResult,
+    RetryRequested,
+    build_asset_context,
+    materialize,
+)
 
-from retail_pulse.orchestration import alerts, freshness
+from retail_pulse.orchestration import alerts, dlt_assets, freshness
 from retail_pulse.orchestration.dlt_assets import retail_raw_assets
 
 REPO = Path(__file__).parents[1]
@@ -32,6 +39,28 @@ def test_ingestion_failure_requests_two_retries_five_minutes_apart():
     assert excinfo.value.max_retries == 2
     assert excinfo.value.seconds_to_wait == 300
     assert isinstance(excinfo.value.__cause__, ConnectionError)
+
+
+class _FlakyDlt:
+    """Fails on the first attempt, then materializes every RAW table."""
+
+    def __init__(self):
+        self.attempts = 0
+
+    def run(self, context):
+        self.attempts += 1
+        if self.attempts == 1:
+            raise ConnectionError("Snowflake connection reset")
+        for key in context.selected_asset_keys:
+            yield MaterializeResult(asset_key=key)
+
+
+def test_run_succeeds_when_the_retry_succeeds(monkeypatch):
+    monkeypatch.setattr(dlt_assets, "INGEST_RETRY_SECONDS", 0)
+    flaky = _FlakyDlt()
+    result = materialize([retail_raw_assets], resources={"dlt_res": flaky})
+    assert result.success
+    assert flaky.attempts == 2
 
 
 def test_dbt_and_jobs_have_no_retry_policy():

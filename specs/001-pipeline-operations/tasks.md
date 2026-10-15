@@ -13,4 +13,4 @@ Plan: [plan.md](plan.md)
 - [x] T9: `make check` green; `docker compose config` valid
 - [x] T10: `docs/runbook.md`, `docs/phases/10-operations.md`, `docs/README.md` row
 - [x] T11: Project-Spec §11, §14, §15, §17; spec `Status: Implemented`
-- [ ] T12: Run `spec-reviewer`; fix Missing or Partly items; open the PR with its report
+- [x] T12: Run `spec-reviewer`; fix Missing or Partly items; open the PR with its report
