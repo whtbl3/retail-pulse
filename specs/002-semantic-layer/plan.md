@@ -56,9 +56,10 @@ it calls `mf query --explain`, converts the SQL into one expression, and saves i
 `sales_enriched` dataset. preset-cli pins SQLAlchemy below 2 and the project uses 2.1, so it runs in its
 own environment through `uvx`, with the project's `.venv/bin` on `PATH` so it finds `mf`. It needs a
 Preset API token in `.env` (`PRESET_API_TOKEN`, `PRESET_API_SECRET`, `PRESET_WORKSPACES`). It does not
-use `--import-db`, so it never writes the dbt transformer's credentials into Preset. Instead it finds
-the existing `PRESET_READER` connection by name, which must be renamed once to `retail_pulse_dev`
-(the name preset-cli derives from the dbt project and target).
+use `--import-db`, so it never writes the dbt transformer's credentials into Preset. Instead it reuses
+the existing `PRESET_READER` connection, found by its current name: a small committed profile,
+`dbt/preset/profiles.yml`, holds no credentials and sets that name from `PRESET_DATABASE_NAME` in
+`.env` (preset-cli reads `meta.superset.database_name` from the target). Nothing in Preset is renamed.
 
 **5. Dashboard (Q4, R6).** In Preset, the five charts of `RetailPulse Sales Overview` are rebuilt on
 the physical `sales_enriched` dataset with the synced metrics, then the old virtual dataset is
@@ -86,8 +87,9 @@ Done during planning, then removed from the branch:
 | `pyproject.toml`, `uv.lock` | Add `dbt-metricflow` to the dev group |
 | `.github/workflows/ci.yml` | `mf validate-configs --skip-dw` after `dbt parse` in the `test` job |
 | `tests/test_semantic_layer.py` | New: metric list, labels, ratio of sums, single-table SQL |
+| `dbt/preset/profiles.yml` | New: target type and Preset database name only, no credentials |
 | `Makefile` | `preset-sync` target |
-| `.env.example` | `PRESET_API_TOKEN`, `PRESET_API_SECRET`, `PRESET_WORKSPACES` |
+| `.env.example` | `PRESET_API_TOKEN`, `PRESET_API_SECRET`, `PRESET_WORKSPACES`, `PRESET_DATABASE_NAME` |
 
 ## Risks and rollback
 

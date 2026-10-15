@@ -15,10 +15,10 @@ Plan: [plan.md](plan.md)
 - [ ] T6: Add `dbt/models/semantic/sales.yml` (semantic model and eight metrics). `mf validate-configs
       --skip-dw` and T5 pass.
 - [ ] T7: CI: run `mf validate-configs --skip-dw` after `dbt parse` in the `test` job.
-- [ ] T8: `make preset-sync` and the three `PRESET_*` lines in `.env.example`.
+- [ ] T8: `dbt/preset/profiles.yml`, `make preset-sync` and the four `PRESET_*` lines in `.env.example`.
 - [ ] T9: `make check` green; `spec-reviewer` report; open the PR.
 - [ ] T10: Owner, after merge: `make dbt-build` (or wait for the 23:00 run) so `MARTS.SALES_ENRICHED`
-      exists, rename the Preset database to `retail_pulse_dev`, `make preset-sync`, rebuild the five
+      exists, set the `PRESET_*` values in `.env`, `make preset-sync`, rebuild the five
       charts on the synced metrics, rerun the reconciliation (AC5, AC6, AC7), delete the old virtual
       dataset.
 - [ ] T11: Docs: `docs/phases/11-semantic-layer.md`, `docs/README.md` row, note in
