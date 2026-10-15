@@ -1,0 +1,105 @@
+# Semantic layer for the store headcount snapshot (spec 004), on fct_store_headcount_monthly.
+# Headcount is semi-additive: MetricFlow sums it across stores but, over several months, takes the
+# first (opening) or last (closing) month through non_additive_dimension. Revenue per employee is a
+# ratio of sums: net revenue over employee-months (sum of average headcount).
+# `make preset-zip` writes these metrics on a second Preset dataset; see preset_export.py for how the
+# semi-additive ones are carried there.
+
+semantic_models:
+  - name: store_headcount
+    description: Store x month periodic snapshot of staffing and net revenue.
+    model: ref('fct_store_headcount_monthly')
+    defaults:
+      agg_time_dimension: month_start
+    entities:
+      - name: store_month
+        type: primary
+        expr: "store_id || '-' || to_char(month_start, 'YYYY-MM')"
+    dimensions:
+      - name: month_start
+        type: time
+        type_params:
+          time_granularity: month
+      - name: store_name
+        type: categorical
+      - name: is_month_closed
+        type: categorical
+    measures:
+      - name: closing_headcount
+        description: Employees at the end of the month. Semi-additive over months.
+        agg: sum
+        non_additive_dimension:
+          name: month_start
+          window_choice: max
+      - name: opening_headcount
+        description: Employees at the start of the month. Semi-additive over months.
+        agg: sum
+        non_additive_dimension:
+          name: month_start
+          window_choice: min
+      - name: employee_months
+        description: Sum of average_headcount, (opening + closing) / 2 per store-month.
+        agg: sum
+        expr: average_headcount
+      - name: store_net_revenue
+        description: Net revenue of completed sales, from fct_sales.
+        agg: sum
+        expr: net_revenue
+      - name: joiners
+        agg: sum
+      - name: leavers
+        agg: sum
+
+metrics:
+  - name: closing_headcount
+    label: Closing headcount
+    description: >
+      Employees at the end of the period. Semi-additive: summed across stores, never across months;
+      over several months it is the closing headcount of the last month. In Preset, always group by
+      month.
+    type: simple
+    type_params:
+      measure: closing_headcount
+  - name: opening_headcount
+    label: Opening headcount
+    description: >
+      Employees at the start of the period. Semi-additive: summed across stores, never across months;
+      over several months it is the opening headcount of the first month. In Preset, always group by
+      month.
+    type: simple
+    type_params:
+      measure: opening_headcount
+  - name: employee_months
+    label: Employee-months
+    description: Sum of average headcount, (opening + closing) / 2, over the store-months asked for. One employee for one month is 1.
+    type: simple
+    type_params:
+      measure: employee_months
+  - name: store_net_revenue
+    label: Net revenue (snapshot)
+    description: Net revenue of completed sales by store and month, the same figure as net_revenue on the sales model.
+    type: simple
+    type_params:
+      measure: store_net_revenue
+  - name: joiners
+    label: Joiners
+    description: Employees who started in the period. Additive.
+    type: simple
+    type_params:
+      measure: joiners
+  - name: leavers
+    label: Leavers
+    description: Employees whose last working day is in the period. Additive.
+    type: simple
+    type_params:
+      measure: leavers
+  - name: revenue_per_employee
+    label: Revenue per employee per month
+    description: >
+      Net revenue divided by employee-months (average of opening and closing headcount, summed over the
+      store-months asked for). A ratio of sums, never an average of row ratios; empty when there were
+      no staff.
+    type: ratio
+    type_params:
+      numerator: store_net_revenue
+      denominator: employee_months

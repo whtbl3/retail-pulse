@@ -1,4 +1,4 @@
-"""`make preset-zip` (spec 002): the Preset import ZIP built from the MetricFlow metrics.
+"""`make preset-zip` (specs 002 and 004): the Preset import ZIP built from the MetricFlow metrics.
 
 The last test calls `mf query --explain`, so it needs `make dbt-parse` like test_semantic_layer.
 """
@@ -26,6 +26,19 @@ EXPECTED = {
     "quantity_sold": "SUM(quantity)",
     "transaction_count": "COUNT(DISTINCT transaction_id)",
 }
+# Spec 004, on the headcount snapshot dataset
+HEADCOUNT_EXPECTED = {
+    "closing_headcount": "SUM(closing_headcount)",
+    "opening_headcount": "SUM(opening_headcount)",
+    "employee_months": "SUM(average_headcount)",
+    "store_net_revenue": "SUM(net_revenue)",
+    "joiners": "SUM(joiners)",
+    "leavers": "SUM(leavers)",
+    "revenue_per_employee": (
+        "CAST(SUM(net_revenue) AS DOUBLE) / CAST(NULLIF(SUM(average_headcount), 0) AS DOUBLE)"
+    ),
+}
+SEMI_ADDITIVE = {"closing_headcount", "opening_headcount"}
 
 SIMPLE_SQL = "SELECT SUM(net_amount) AS net_revenue FROM RETAIL_PULSE.marts.fct_sales_enriched s"
 DERIVED_SQL = """
@@ -94,6 +107,14 @@ def fake_sql(metric):
     return f"SELECT SUM({metric}) AS {metric} FROM RETAIL_PULSE.marts.fct_sales_enriched s"
 
 
+def datasets_of(files):
+    return {
+        name.rsplit("/", 1)[-1]: yaml.safe_load(content)
+        for name, content in files.items()
+        if "/datasets/" in name
+    }
+
+
 def read_bundle(path):
     with zipfile.ZipFile(io.BytesIO(path.read_bytes())) as bundle:
         return {name: bundle.read(name).decode() for name in bundle.namelist()}
@@ -117,6 +138,7 @@ def test_bundle_has_the_dataset_on_the_existing_connection(tmp_path):
     assert dataset["main_dttm_col"] == "FULL_DATE"
     assert {m["metric_name"] for m in dataset["metrics"]} == set(EXPECTED)
     assert all(m["verbose_name"] and m["description"] for m in dataset["metrics"])
+    assert all(m["warning_text"] is None for m in dataset["metrics"])
     # Fields Superset's ImportV1DatasetSchema refuses as null keep the export's values
     assert dataset["normalize_columns"] is False
     assert dataset["always_filter_main_dttm"] is False
@@ -126,6 +148,58 @@ def test_bundle_has_the_dataset_on_the_existing_connection(tmp_path):
     assert {"FULL_DATE", "STORE_NAME", "NET_AMOUNT"} <= {
         c["column_name"] for c in dataset["columns"]
     }
+
+
+def test_the_headcount_snapshot_is_a_second_dataset_with_its_own_metrics(tmp_path):
+    """Spec 004, R11: one dataset per semantic model, each metric on the dataset it reads."""
+    export = make_export(tmp_path / "export.zip")
+    files = read_bundle(pe.build(export, tmp_path / "out.zip", compile_sql=fake_sql))
+    datasets = datasets_of(files)
+    assert set(datasets) == {"FCT_SALES_ENRICHED.yaml", "FCT_STORE_HEADCOUNT_MONTHLY.yaml"}
+
+    headcount = datasets["FCT_STORE_HEADCOUNT_MONTHLY.yaml"]
+    assert headcount["table_name"] == "FCT_STORE_HEADCOUNT_MONTHLY"
+    assert headcount["schema"] == "MARTS"
+    assert headcount["main_dttm_col"] == "MONTH_START"
+    assert headcount["database_uuid"] == DB_UUID
+    assert headcount["uuid"] not in {pe.DATASET_UUID, datasets["FCT_SALES_ENRICHED.yaml"]["uuid"]}
+    assert {m["metric_name"] for m in headcount["metrics"]} == set(HEADCOUNT_EXPECTED)
+    assert {"MONTH_START", "STORE_NAME", "CLOSING_HEADCOUNT", "NET_REVENUE"} <= {
+        c["column_name"] for c in headcount["columns"]
+    }
+
+
+def test_semi_additive_metrics_are_a_plain_sum_with_a_warning(tmp_path):
+    """Spec 004, R7: one expression cannot keep only the last month, so Preset warns instead."""
+    export = make_export(tmp_path / "export.zip")
+    files = read_bundle(pe.build(export, tmp_path / "out.zip", compile_sql=fake_sql))
+    headcount = datasets_of(files)["FCT_STORE_HEADCOUNT_MONTHLY.yaml"]
+    metrics = {m["metric_name"]: m for m in headcount["metrics"]}
+    for name in SEMI_ADDITIVE:
+        assert metrics[name]["expression"] == HEADCOUNT_EXPECTED[name]
+        assert "group by month" in metrics[name]["warning_text"].lower()
+    for name in set(metrics) - SEMI_ADDITIVE:
+        assert metrics[name]["warning_text"] is None
+
+
+def test_a_ratio_on_a_semi_additive_measure_is_refused():
+    measures = {
+        "closing_headcount": (
+            "m",
+            {
+                "name": "closing_headcount",
+                "agg": "sum",
+                "non_additive_dimension": {"name": "month_start"},
+            },
+        )
+    }
+    metric = {
+        "name": "x",
+        "type": "ratio",
+        "type_params": {"input_measures": [{"name": "closing_headcount"}]},
+    }
+    with pytest.raises(ValueError, match="semi-additive"):
+        pe.semi_additive_expression(metric, measures)
 
 
 def test_a_second_build_keeps_the_same_uuids(tmp_path):
@@ -145,8 +219,14 @@ def test_an_export_that_is_not_one_dataset_on_one_connection_is_refused(
 
 
 def test_the_real_metrics_convert_to_the_expected_expressions():
-    expressions = {m["name"]: pe.to_expression(pe.explain(m["name"])) for m in pe.load_metrics()}
-    assert expressions == EXPECTED
+    measures = pe.measures_by_name(pe.load_semantic_manifest())
+    expressions = {
+        m["name"]: (
+            pe.semi_additive_expression(m, measures) or pe.to_expression(pe.explain(m["name"]))
+        )
+        for m in pe.load_metrics()
+    }
+    assert expressions == EXPECTED | HEADCOUNT_EXPECTED
 
 
 def test_profiles_come_from_the_env_var_then_the_project_then_home(tmp_path, monkeypatch):
