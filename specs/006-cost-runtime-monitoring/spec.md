@@ -10,8 +10,9 @@
 
 The pipeline warns when it fails or when RAW is stale, but not when it costs more or runs longer than
 usual. Snowflake credits are only capped by the monthly resource monitors (10 credits for the pipeline
-warehouse, 2 for CI), which suspend the warehouse once the cap is hit: a slow model, a mistaken full
-refresh or a bigger warehouse is noticed only when the pipeline stops. Nobody can answer "how much does
+warehouse, 2 for CI), which notify at 80 percent of the month's cap and suspend the warehouse at 100: a
+slow model, a mistaken full refresh or a bigger warehouse shows up only as the month's total, late, and
+without saying which day or model caused it. Nobody can answer "how much does
 a night cost, and which model takes the longest" without logging in to Snowsight.
 
 ## Goal
