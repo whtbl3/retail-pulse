@@ -95,6 +95,87 @@ The CI part (`RETAIL_PULSE_CI`, `CI_RUNNER`, `GITHUB_CI`) is at the end of the f
 *Why dbt can only read `RAW`:* RAW is the only place that keeps the SCD2 history of `product` and `employee`. If dbt
 could write there, one buggy model could destroy history that cannot be recovered.
 
+### How the access rules are wired
+
+The two tables above show the result. Four mechanisms in `init.sql` produce it, and each one fixes a problem that
+would otherwise appear later, often only on the second or third run.
+
+```text
+ACCOUNTADMIN
+   └── SYSADMIN
+         ├── LOADER ──────▶ USAGE on RETAIL_WH, ALL on schema RAW      ◀── granted to user DLT_LOADER
+         └── TRANSFORMER ─▶ USAGE on RETAIL_WH, SELECT on RAW tables,  ◀── granted to user DBT_TRANSFORMER
+                            owner of STAGING, INTERMEDIATE, MARTS
+```
+
+**1. Role hierarchy: the new roles sit under `SYSADMIN`.**
+
+```sql
+GRANT ROLE LOADER TO ROLE SYSADMIN;
+GRANT ROLE TRANSFORMER TO ROLE SYSADMIN;
+```
+
+Granting a role to another role makes the second one inherit every privilege of the first. `SYSADMIN` is the
+built-in role meant to manage databases and warehouses, and `ACCOUNTADMIN` already sits above it, so both now inherit
+everything `LOADER` and `TRANSFORMER` can do, including the objects they own. Snowflake recommends attaching every
+custom role to `SYSADMIN` this way: when a role sits outside that tree, administrators cannot manage the
+tables it owns, for example to inspect or drop a table dlt created. The arrow only goes up: `LOADER` and `TRANSFORMER`
+gain nothing from `SYSADMIN`, so they stay least-privilege. The same pattern is used for `CI_RUNNER` in section 5.
+
+**2. Users get roles; privileges belong to roles.**
+
+```sql
+CREATE USER IF NOT EXISTS DLT_LOADER TYPE = SERVICE DEFAULT_ROLE = LOADER DEFAULT_WAREHOUSE = RETAIL_WH;
+GRANT ROLE LOADER TO USER DLT_LOADER;
+```
+
+Snowflake never grants a privilege straight to a user here. The chain is always user → role → privilege: `DLT_LOADER`
+holds the role `LOADER`, and `LOADER` holds the privileges on `RETAIL_WH` and `RAW`. To change what dlt may do, you
+change the role, not the user. `DEFAULT_ROLE` and `DEFAULT_WAREHOUSE` only choose the role and warehouse a session
+starts with, so dlt and dbt do not have to run `USE ROLE` or `USE WAREHOUSE` after connecting. They do **not** grant
+anything: Snowflake's docs state that a default role must still be granted with `GRANT ROLE`, which is why every
+`CREATE USER` is followed by a `GRANT ROLE ... TO USER`. Without that line the default role would name a role the user
+does not hold.
+
+**3. Future grants: tables dlt creates later are readable by dbt automatically.**
+
+```sql
+GRANT SELECT ON ALL TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA RETAIL_PULSE.RAW TO ROLE TRANSFORMER;
+```
+
+dlt (role `LOADER`) creates the RAW tables, so `LOADER` owns them and `TRANSFORMER` has no access by default. `ON ALL
+TABLES` covers only tables that exist when the statement runs; on a fresh account RAW is still empty, so it grants
+nothing. `ON FUTURE TABLES` covers every table created in RAW afterwards: when dlt loads a new table, Snowflake
+gives `TRANSFORMER` `SELECT` on it at creation. Without the future grant, the first ingest that adds a table would make
+the next `dbt build` fail with an "insufficient privileges" or "does not exist or not authorized" error until someone
+granted access by hand. Keep both lines: `ALL` covers tables created before the future grant existed (for example, an account set up with an
+older version of the script), `FUTURE` covers new ones.
+Two details: a schema-level future grant like this one overrides any database-level future grant, and only a role
+with `MANAGE GRANTS` (here `ACCOUNTADMIN`) can create it. `CI_RUNNER` gets the same pair on every schema it reads.
+
+**4. Ownership: the dbt schemas are created as `TRANSFORMER`.**
+
+```sql
+USE ROLE TRANSFORMER;
+CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.STAGING;
+CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.INTERMEDIATE;
+CREATE SCHEMA IF NOT EXISTS RETAIL_PULSE.MARTS;
+USE ROLE ACCOUNTADMIN;
+```
+
+In Snowflake the role that is active when an object is created becomes its owner, and the owner has full control
+of it: create, replace and drop tables and views inside, and grant access to others. The script runs as
+`ACCOUNTADMIN`, so without the switch the three schemas would belong to `ACCOUNTADMIN`, and dbt would get
+"insufficient privileges" when it tries to create its models there. Switching to `TRANSFORMER` first makes dbt the
+owner of its own layers with no extra grants. The switch is possible because of mechanism 1: `TRANSFORMER` sits
+under `SYSADMIN` and `ACCOUNTADMIN`, so the admin user running the script can take it on, and `TRANSFORMER` already
+has `CREATE SCHEMA` on the database. The script switches back to `ACCOUNTADMIN` right after, because section 5
+creates a warehouse, a role and a user, which `TRANSFORMER` is not allowed to do.
+
+Compare with `RAW`: it is created as `ACCOUNTADMIN` and `LOADER` only gets `ALL` on it, not ownership. dlt can create
+and fill tables there, but cannot drop the schema or change who else has access to it.
+
 ### Why key pairs, not passwords
 
 The private key stays on your machine, and Snowflake only keeps the public key. There is no password to leak or
@@ -108,7 +189,11 @@ USE ROLE ACCOUNTADMIN;
 DESC USER DLT_LOADER;                  -- the RSA_PUBLIC_KEY_FP column must look like SHA256:...
 SHOW GRANTS TO ROLE LOADER;            -- shows ALL privileges on the RAW schema
 SHOW SCHEMAS IN DATABASE RETAIL_PULSE; -- shows RAW, STAGING, INTERMEDIATE, MARTS
+SHOW GRANTS OF ROLE TRANSFORMER;       -- granted to role SYSADMIN and to user DBT_TRANSFORMER
+SHOW FUTURE GRANTS IN SCHEMA RETAIL_PULSE.RAW; -- SELECT on TABLE to TRANSFORMER and CI_RUNNER
 ```
+
+The `owner` column of `SHOW SCHEMAS` must read `TRANSFORMER` for `STAGING`, `INTERMEDIATE` and `MARTS`.
 
 *If `RSA_PUBLIC_KEY_FP` is empty:* the public key is not attached to the user, and dlt will not be able to log in.
 
@@ -180,5 +265,8 @@ Dagster runs the same pipeline ([phase 6](06-dagster.md)) and shares the dlt sta
 - [dlt: incremental loading](https://dlthub.com/docs/general-usage/incremental-loading): how the `updated_at` cursor works.
 - [dlt: `sql_database` source](https://dlthub.com/docs/dlt-ecosystem/verified-sources/sql_database): how tables are read from PostgreSQL.
 - [Snowflake: key-pair authentication](https://docs.snowflake.com/en/user-guide/key-pair-auth).
+- [Snowflake: access control overview](https://docs.snowflake.com/en/user-guide/security-access-control-overview): roles, role hierarchy, ownership.
+- [Snowflake: `GRANT <privileges>`](https://docs.snowflake.com/en/sql-reference/sql/grant-privilege): `ON ALL` and `ON FUTURE` grants.
+- [Snowflake: `CREATE USER`](https://docs.snowflake.com/en/sql-reference/sql/create-user): `DEFAULT_ROLE` does not grant the role.
 
 Next: [Phase 4: Source change simulator](04-product-change-simulator.md).
