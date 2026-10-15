@@ -55,9 +55,12 @@ make seed                 # load ~100k historical transactions
 make test                 # run all tests
 ```
 
-On to Snowflake, dbt and Dagster (needs the setup from [phase 3](phases/03-ingestion-snowflake.md) and [phase 5](phases/05-dbt.md)):
+On to Snowflake, dbt and Dagster. `make setup` asks only for the Snowflake account identifier and the
+`ACCOUNTADMIN` login, then fills in `.env`, creates the key pairs and users (`make snowflake-init`), and writes
+`.dlt/secrets.toml` and `~/.dbt/profiles.yml`. It is safe to rerun and never overwrites an existing file. Details in
+[phase 3](phases/03-ingestion-snowflake.md) and [phase 5](phases/05-dbt.md).
 ```bash
-make snowflake-init       # once: create warehouse, database, role, user
+make setup                # once per machine: config files, keys, Snowflake users and warehouse
 make ingest               # load Postgres into Snowflake RAW
 make dbt-deps && make dbt-build   # build staging through marts and run tests
 make dagster              # open the Dagster UI to orchestrate the whole chain
