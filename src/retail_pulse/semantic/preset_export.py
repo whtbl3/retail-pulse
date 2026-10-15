@@ -42,19 +42,36 @@ OUTPUT = DBT_DIR / "target" / f"preset_{MODEL}.zip"
 ROOT = "retail_pulse_metrics"
 
 
+def profiles_dir(dbt_dir: Path = DBT_DIR, env: dict[str, str] | None = None) -> Path:
+    """Where dbt finds profiles.yml: DBT_PROFILES_DIR, else the project folder, else ~/.dbt.
+
+    `mf` only looks at DBT_PROFILES_DIR and the current folder, so without this it misses the
+    ~/.dbt/profiles.yml that `make setup` writes.
+    """
+    env = os.environ if env is None else env
+    if env.get("DBT_PROFILES_DIR"):
+        return Path(env["DBT_PROFILES_DIR"]).expanduser().resolve()
+    if (dbt_dir / "profiles.yml").exists():
+        return dbt_dir.resolve()
+    return Path.home() / ".dbt"
+
+
 def explain(metric: str, dbt_dir: Path = DBT_DIR) -> str:
     """The SQL MetricFlow generates for a metric. Compiles only; does not query Snowflake."""
-    env = dict(os.environ)
-    if env.get("DBT_PROFILES_DIR"):
-        env["DBT_PROFILES_DIR"] = str(Path(env["DBT_PROFILES_DIR"]).resolve())
+    env = dict(os.environ, DBT_PROFILES_DIR=str(profiles_dir(dbt_dir)))
     result = subprocess.run(
         ["mf", "query", "--explain", "--metrics", metric],
         cwd=dbt_dir,
         env=env,
         capture_output=True,
         text=True,
-        check=True,
     )
+    if result.returncode != 0 or "SELECT" not in result.stdout:
+        output = (result.stderr + result.stdout).strip().splitlines()
+        raise ValueError(
+            f"mf query --explain failed for metric {metric} "
+            f"(profiles from {env['DBT_PROFILES_DIR']}):\n" + "\n".join(output[-15:])
+        )
     return result.stdout[result.stdout.index("SELECT") :]
 
 
