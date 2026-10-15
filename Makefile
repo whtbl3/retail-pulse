@@ -8,13 +8,16 @@ DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt runs from dbt/ and loads .env first because profiles.yml uses env_var(); dbt comes from .venv (via uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster dagster-up dagster-down dagster-logs clean
+.PHONY: help install setup up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster dagster-up dagster-down dagster-logs clean
 
 help: ## List the commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install dependencies from uv.lock
 	uv sync
+
+setup: install ## First-time setup: asks for the Snowflake account and admin login, writes .env, keys, dlt and dbt config
+	uv run python -m retail_pulse.setup_local
 
 up: ## Start Postgres and wait for the healthcheck
 	$(COMPOSE) up -d --wait postgres
