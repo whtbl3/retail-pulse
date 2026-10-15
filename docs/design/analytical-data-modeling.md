@@ -254,7 +254,7 @@ Limitation (also in section 9.2 of Project-Spec): each `stream.py` cycle must be
 | Type | Used for | Applied here |
 |---|---|---|
 | **Transaction fact** | each row is an event that happened at a point in time | **`fct_sales`** |
-| Periodic snapshot | state at regular intervals (for example end-of-day inventory) | not used, inventory is out of scope |
+| Periodic snapshot | state at regular intervals (for example end-of-day inventory) | **`fct_store_headcount_monthly`** (staffing per store per month) |
 | Accumulating snapshot | a process with several milestones, where the row is updated as each milestone passes (order → delivery → payment) | not used, the source has no multi-milestone lifecycle |
 | Factless fact | records a relationship, with no measures | later: promotion coverage |
 
@@ -263,6 +263,16 @@ Limitation (also in section 9.2 of Project-Spec): each `stream.py` cycle must be
 - loaded incrementally by (`transaction_id`, `line_number`); receipts do not change after they are written, so deletes and updates need no handling;
 - each row is tied to time through `date_key` and `time_key`, and keeps `transaction_ts` to join SCD2 versions (step 5). `date_key` and `time_key`
   are computed from local time (`Asia/Ho_Chi_Minh`), not UTC.
+
+**`fct_store_headcount_monthly` is a periodic snapshot** (spec 004, Project-Spec §10.6). Business process: staffing
+of a store. Grain: one store per calendar month, every month from January 2020, also when nothing happened. Measures:
+- `opening_headcount`, `closing_headcount`: **semi-additive**, a level at a point in time. Sum them across stores, never
+  across months; over a quarter the headcount is the closing headcount of its last month;
+- `joiners`, `leavers`, `transfers_in`, `transfers_out`, `net_revenue`: additive (flows during the month);
+- revenue per employee is not stored; it is the metric `SUM(net_revenue) / SUM(average_headcount)`.
+
+It is dense (a row for every store-month), rebuilt in full each run, and carries `store_name` and `month_start` next to
+`store_key` and `month_start_date_key` so the semantic layer and Preset read it without joins.
 
 Other facts, built from the same source, come after `fct_sales` runs reliably:
 - **`fct_sales_transaction`** (aggregate table, one row per receipt): basket value and average transaction value. Built from `fct_sales`, without changing the grain.

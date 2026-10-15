@@ -1,6 +1,6 @@
 # 004: Monthly store headcount snapshot
 
-- Status: Approved (2026-10-15, PhucLH)
+- Status: Implemented (approved 2026-10-15, PhucLH)
 - Intent: none (requested by the project owner, 2026-10-15: a periodic snapshot fact next to the
   transaction fact)
 - Project-Spec sections affected: §10.2 (new gold model), §10 (new subsection with the snapshot
@@ -116,10 +116,10 @@ grain or load strategy changes.
 
 | Decision | Status | Rationale |
 | --- | --- | --- |
-| The snapshot is built from the employee history and sales fact in the warehouse, not from new source data | Proposed | History already exists (SCD2 on store assignment); no RAW or generator change needed |
-| An employee is counted at a store by the assignment in history on the day in question; before the first recorded change, the first known store applies | Proposed | That is how the existing employee history works; transfers are only recorded since the change simulator started |
-| An employee whose last day is the month's last day leaves in that month and is not in its closing headcount | Proposed | Keeps R5's identity exact |
-| Headcount is semi-additive; revenue per employee is a ratio of sums over average headcount | Proposed | Follows the Final decision "ratio metrics are ratios of sums" (§17) |
+| The snapshot is built from the employee history and sales fact in the warehouse, not from new source data | Final | History already exists (SCD2 on store assignment); no RAW or generator change needed |
+| An employee is counted at a store by the assignment in history on the day in question; before the first recorded change, the first known store applies | Final | That is how the existing employee history works; transfers are only recorded since the change simulator started |
+| An employee whose last day is the month's last day leaves in that month and is not in its closing headcount | Final | Keeps R5's identity exact |
+| Headcount is semi-additive; revenue per employee is a ratio of sums over average headcount | Final | Follows the Final decision "ratio metrics are ratios of sums" (§17) |
 
 ## Answers to open questions
 
