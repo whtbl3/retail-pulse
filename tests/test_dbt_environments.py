@@ -208,3 +208,50 @@ def test_a_dev_build_selects_only_the_changed_model_and_its_dependents(tmp, prod
         downstream |= frontier
     assert children
     assert selected() == {"stg_store", *downstream}
+
+
+
+# --- Cleanup (R7, R9) ---
+# `dbt run-operation` opens a Snowflake connection before running a macro, so the drop macro is rendered
+# here with Jinja and stand-ins for dbt's target, run_query and exceptions.
+
+
+class Refused(Exception):
+    pass
+
+
+def drop_schemas(target_name: str, schema: str, database: str = "RETAIL_PULSE_CI") -> list[str]:
+    import jinja2
+
+    queries: list[str] = []
+
+    def refuse(message):
+        raise Refused(message)
+
+    env = jinja2.Environment(extensions=["jinja2.ext.do"])
+    source = (DBT_DIR / "macros" / "drop_target_schemas.sql").read_text()
+    module = env.from_string(source).make_module(
+        {
+            "target": {"name": target_name, "schema": schema, "database": database},
+            "run_query": queries.append,
+            "log": lambda *args, **kwargs: "",
+            "exceptions": {"raise_compiler_error": refuse},
+        }
+    )
+    module.drop_target_schemas()
+    return queries
+
+
+def test_dropping_schemas_drops_only_the_target_schemas():
+    assert drop_schemas("ci", "PR_7") == [
+        f"drop schema if exists RETAIL_PULSE_CI.PR_7{suffix} cascade"
+        for suffix in ("", "_staging", "_intermediate", "_marts")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target_name", "schema"), [("prod", "PUBLIC"), ("prod", "DBT_X"), ("dev", "MARTS"), ("dev", "raw")]
+)
+def test_dropping_schemas_refuses_production(target_name, schema):
+    with pytest.raises(Refused, match="refuses to drop production"):
+        drop_schemas(target_name, schema, "RETAIL_PULSE")
