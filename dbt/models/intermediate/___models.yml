@@ -120,7 +120,8 @@ unit_tests:
       2 leaves on 2020-02-01, its last working day, so it is not employed at the end of it. 3 moves at
       23:30 local on 2020-02-01, before the day ends. 4 moves at 00:30 local on 2020-02-02 (still
       2020-02-01 in UTC), so the move counts on 2020-02-02. 5 left on 2020-01-31 and is moved later:
-      it is never employed in these days.
+      it is never employed in these days. 6 joins on 2020-02-01 and is moved the same day at 10:00
+      local: one joiner at the end-of-day store 2, no transfer.
     model: int_employee_daily_store
     overrides:
       vars:
@@ -137,6 +138,8 @@ unit_tests:
           - {employee_id: 4, store_id: 2, start_date: "2019-05-01", end_date: null, valid_from: "2020-02-01 17:30:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
           - {employee_id: 5, store_id: 1, start_date: "2019-05-01", end_date: "2020-01-31", valid_from: "1900-01-01 00:00:00 +0000", valid_to: "2020-02-01 05:00:00 +0000"}
           - {employee_id: 5, store_id: 2, start_date: "2019-05-01", end_date: "2020-01-31", valid_from: "2020-02-01 05:00:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
+          - {employee_id: 6, store_id: 1, start_date: "2020-02-01", end_date: null, valid_from: "1900-01-01 00:00:00 +0000", valid_to: "2020-02-01 03:00:00 +0000"}
+          - {employee_id: 6, store_id: 2, start_date: "2020-02-01", end_date: null, valid_from: "2020-02-01 03:00:00 +0000", valid_to: "9999-12-31 00:00:00 +0000"}
     expect:
       rows:
         - {employee_id: 1, calendar_date: "2020-01-31", is_employed: false, store_id: 1, prev_is_employed: null, prev_store_id: null}
@@ -154,3 +157,6 @@ unit_tests:
         - {employee_id: 5, calendar_date: "2020-01-31", is_employed: false, store_id: 1, prev_is_employed: null, prev_store_id: null}
         - {employee_id: 5, calendar_date: "2020-02-01", is_employed: false, store_id: 2, prev_is_employed: false, prev_store_id: 1}
         - {employee_id: 5, calendar_date: "2020-02-02", is_employed: false, store_id: 2, prev_is_employed: false, prev_store_id: 2}
+        - {employee_id: 6, calendar_date: "2020-01-31", is_employed: false, store_id: 1, prev_is_employed: null, prev_store_id: null}
+        - {employee_id: 6, calendar_date: "2020-02-01", is_employed: true, store_id: 2, prev_is_employed: false, prev_store_id: 1}
+        - {employee_id: 6, calendar_date: "2020-02-02", is_employed: true, store_id: 2, prev_is_employed: true, prev_store_id: 2}
