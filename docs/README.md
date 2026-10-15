@@ -27,6 +27,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 8 | Great Expectations: RAW quality checks | [phases/08-great-expectations.md](phases/08-great-expectations.md) |
 | 9 | DataOps: GitHub Actions, slim CI for dbt | [phases/09-dataops-ci.md](phases/09-dataops-ci.md) |
 | 10 | Operations: always-on Dagster in Docker, retries, RAW freshness, Slack alerts | [phases/10-operations.md](phases/10-operations.md), [runbook.md](runbook.md) |
+| 11 | Semantic layer: MetricFlow metrics in dbt, imported into Preset | [phases/11-semantic-layer.md](phases/11-semantic-layer.md) |
 
 ## Detailed design by component
 

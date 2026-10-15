@@ -40,6 +40,7 @@ packages = ["src/retail_pulse"]
 [dependency-groups]
 dev = [
     "dagster-webserver>=1.13.25",
+    "dbt-metricflow>=0.15.0",
     "pre-commit>=4.6.2",
     "pyrefly>=1.3.2",
     "pytest>=9.1.1",

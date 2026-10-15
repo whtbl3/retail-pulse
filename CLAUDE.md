@@ -17,6 +17,8 @@ relevant section before changing behavior. When docs disagree with the spec, the
   profile; it fails without them.
 - `make check`: ruff without fixing, then `make test`. Same as CI. Run it before calling a change done.
 - `make dbt-parse`: compiles dbt without querying data. Needs `.env` and `dbt/profiles.yml`.
+- `make preset-zip EXPORT=<zip>`: builds the Preset dataset import ZIP from the MetricFlow metrics in
+  `dbt/models/semantic/`. Offline; the user imports the ZIP in Preset.
 - `make dbt-build`, `make ingest`, `make dagster`: need a real Snowflake account. Do not run them unless
   the user asks.
 
@@ -34,6 +36,18 @@ Before calling a change done, run `make check` and show the output.
 - `infras/postgres/init/01_schema.sql` and `src/retail_pulse/oltp/models.py` must stay aligned.
 - Analytics use `completed` transactions only. Customer, inventory, returns and Kubernetes are out of scope.
 - Never commit secrets: `.env`, `.dlt/secrets.toml`, `dbt/profiles.yml`, `*.p8`, `.snowflake/`.
+
+## Ask, do not guess
+
+- When the user's intent, a requirement or a choice between options is unclear, ask before acting.
+  Do not fill the gap with an assumption.
+- Every question to the user is multiple choice: one short question, 2 to 4 concrete options with a
+  one-line consequence each, your recommendation marked, and always a last option
+  **Others: let's discuss** so the user can talk it through instead of picking. Use a selectable
+  question UI when the tool offers one (for example `AskUserQuestion`); otherwise a numbered list.
+- Before stating a fact about an external tool (version support, licence, price, plan, auth method,
+  default behavior), check its current docs or source code. If you could not check it, say so
+  plainly and ask, instead of presenting a guess as fact.
 
 ## Workflow
 
