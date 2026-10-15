@@ -1,6 +1,6 @@
 # 004: Monthly store headcount snapshot
 
-- Status: Draft
+- Status: Approved (2026-10-15, PhucLH)
 - Intent: none (requested by the project owner, 2026-10-15: a periodic snapshot fact next to the
   transaction fact)
 - Project-Spec sections affected: §10.2 (new gold model), §10 (new subsection with the snapshot
