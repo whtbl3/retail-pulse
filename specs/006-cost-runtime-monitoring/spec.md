@@ -25,10 +25,10 @@ same night, early enough to act before the monthly cap suspends the warehouse.
 
 In scope:
 
-- Daily credits per warehouse used by RetailPulse (Q1: which warehouses).
+- Daily credits for the pipeline warehouse and the CI warehouse (Q1).
 - Run time of each scheduled pipeline run and of each dbt model in it.
 - A warning on Slack, through the existing alert channel, when cost or run time crosses a threshold
-  (Q2: how the threshold is set).
+  set relative to recent days (Q2).
 - One Preset chart of daily credits (Q3).
 - A phase guide explaining where the numbers come from, their delay, and what to do on a warning.
 
@@ -47,8 +47,9 @@ Out of scope:
 2. **R2:** A mart holds, for each scheduled pipeline run, its start, end and duration, and for each
    dbt model in it, its duration.
 3. **R3:** Credits in the mart match the credits Snowflake reports for the same warehouse and day.
-4. **R4:** After each scheduled run, the pipeline compares the last complete day's credits and the run's
-   duration with the threshold (Q2) and sends one Slack message when either is crossed, naming the
+4. **R4:** After each scheduled run, the pipeline compares the last complete day's credits per
+   warehouse and the run's duration with twice the median of the last 14 complete days (or runs),
+   never below a fixed floor (Q2), and sends one Slack message when either is crossed, naming the
    figure, the threshold and the slowest models.
 5. **R5:** A cost or run-time warning never fails or blocks the pipeline, the same as the RAW
    freshness warning.
@@ -94,20 +95,15 @@ grain or load strategy changes.
 | Only complete days are compared with the threshold | Proposed | Snowflake reports usage with a delay; a partial day would look cheap or trigger false alarms |
 | Monitoring needs only read access to Snowflake's usage data, granted by the owner | Proposed | Least privilege (§13.4); no role gains rights to change warehouses |
 
+## Answers to open questions
+
+Answered by the owner on 2026-10-15 (decision cards in the project thread).
+
+- **Q1, warehouses:** both, the pipeline warehouse and the CI warehouse, one row each per day.
+- **Q2, threshold:** relative. Warn above twice the median of the last 14 complete days, with a small
+  fixed floor so near-zero days do not alert.
+- **Q3, reach:** marts, Slack warning and one Preset chart of daily credits.
+
 ## Open questions
 
-- **Q1** [NEEDS CLARIFICATION] Which warehouses are monitored?
-  1. Both: the pipeline warehouse and the CI warehouse, each with its own row. **Recommended:** CI
-     also spends credits and has its own cap.
-  2. Only the pipeline warehouse.
-  3. Others: let's discuss.
-- **Q2** [NEEDS CLARIFICATION] How is "more than usual" decided?
-  1. Relative: warn above twice the median of the last 14 complete days, with a small fixed floor so
-     near-zero days do not alert. **Recommended:** adapts as data grows, no number to retune.
-  2. Fixed numbers set in config (for example credits per day and minutes per run).
-  3. Others: let's discuss.
-- **Q3** [NEEDS CLARIFICATION] How far does it reach?
-  1. Marts + Slack warning + one Preset chart of daily credits. **Recommended:** the chart is what a
-     reviewer sees.
-  2. Marts + Slack warning only.
-  3. Others: let's discuss.
+None.
