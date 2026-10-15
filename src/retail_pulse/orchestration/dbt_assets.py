@@ -7,9 +7,12 @@ from dagster_dbt import DbtCliResource, DbtProject, dbt_assets
 # .../repo/src/retail_pulse/orchestration/dbt_assets.py -> parents[3] is the repo root
 # profiles.yml lives outside the repo (~/.dbt); override with DBT_PROFILES_DIR. It must be passed
 # to DbtProject: prepare_if_dev builds a DbtCliResource from it to run `dbt deps` and `dbt parse`.
+# Dagster is the production pipeline (spec 003): it always uses the profile's `prod` target, which
+# writes STAGING/INTERMEDIATE/MARTS. The DbtCliResource built from this project inherits it.
 dbt_project = DbtProject(
     project_dir=Path(__file__).parents[3] / "dbt",
     profiles_dir=os.environ.get("DBT_PROFILES_DIR", str(Path.home() / ".dbt")),
+    target="prod",
 )
 dbt_project.prepare_if_dev()
 

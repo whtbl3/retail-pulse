@@ -1,5 +1,9 @@
 # Copy this content into ~/.dbt/profiles.yml (OUTSIDE the repo).
 # Reference environment variables only (see .env.example); never write passwords or keys into the file.
+# Two targets (spec 003, docs/phases/12-environments.md):
+# - dev, the default: your own schemas DBT_<NAME>_STAGING/INTERMEDIATE/MARTS, named by DBT_DEV_SCHEMA.
+# - prod: the production schemas STAGING/INTERMEDIATE/MARTS that Preset reads. Only Dagster and the
+#   explicit commands (`make dbt-build-prod`, `make dbt-full-refresh`) use it.
 retail_pulse:
   target: dev
   outputs:
@@ -11,5 +15,15 @@ retail_pulse:
       private_key_path: "{{ env_var('DBT_PRIVATE_KEY_PATH') }}"
       database: RETAIL_PULSE
       warehouse: RETAIL_WH
-      schema: DBT_DEV
+      schema: "{{ env_var('DBT_DEV_SCHEMA') }}"
+      threads: 4
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: DBT_TRANSFORMER
+      role: TRANSFORMER
+      private_key_path: "{{ env_var('DBT_PRIVATE_KEY_PATH') }}"
+      database: RETAIL_PULSE
+      warehouse: RETAIL_WH
+      schema: PUBLIC
       threads: 4
