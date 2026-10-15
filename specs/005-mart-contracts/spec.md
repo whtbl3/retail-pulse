@@ -1,6 +1,6 @@
 # 005: Enforced contracts on the marts
 
-- Status: Draft
+- Status: Approved (2026-10-15, PhucLH)
 - Intent: none (requested by the project owner, 2026-10-15, as a next step towards a senior-level
   portfolio)
 - Project-Spec sections affected: §10 (mart contract rule), §13.1, §13.3, §17

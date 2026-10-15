@@ -1,6 +1,6 @@
 # 006: Warehouse cost and run time monitoring
 
-- Status: Draft
+- Status: Approved (2026-10-15, PhucLH)
 - Intent: none (requested by the project owner, 2026-10-15, as a next step towards a senior-level
   portfolio)
 - Project-Spec sections affected: §10.2 (new marts), §11 (new check), §12 (new chart), §13.4, §14
