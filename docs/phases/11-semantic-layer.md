@@ -62,7 +62,7 @@ The Preset API, which a direct sync would need, is only available on the Enterpr
 ([The Preset API](https://docs.preset.io/docs/the-preset-api)). On other plans the metrics go in as a
 dataset import.
 
-Once, after `MARTS.FCT_SALES_ENRICHED` exists (the 23:00 run, or `make dbt-build`):
+Once, after `MARTS.FCT_SALES_ENRICHED` exists (the 23:00 run, or `make dbt-build-prod`):
 
 1. **Export a dataset that uses the Snowflake connection.** In Preset, **Data > Datasets**, hover over
    `sales_enriched`, click the Export icon under **Actions**

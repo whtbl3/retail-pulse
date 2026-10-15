@@ -43,7 +43,9 @@ Example: PR number 7 edits `dim_payment_method`:
 
 - **Not built:** the other 6 dimensions, and all of staging and intermediate. Thanks to `--defer`, `ref()` to them points
   to production (`RETAIL_PULSE.marts.dim_product`...). That is why the CI user needs **read** access to the production schemas.
-- **Cleanup:** the last step drops the `PR_7_*` schemas. PR number 8 running in parallel uses `PR_8_*`, so the two PRs
+- **Cleanup:** the `PR_7_*` schemas stay after the run so reviewers can query them; CI drops them before each build
+  (a re-run starts clean), and `ci-cleanup.yml` drops them when the PR is merged or closed
+  ([phase 12](12-environments.md)). PR number 8 running in parallel uses `PR_8_*`, so the two PRs
   do not overwrite each other. The per-PR schema name is set by the `generate_schema_name` macro; see
   [Custom schemas](https://docs.getdbt.com/docs/build/custom-schemas).
 
@@ -164,13 +166,14 @@ Then run `git switch main && git pull && git fetch --prune`, and `git branch -D 
 
 | File | Job |
 |---|---|
-| `.github/workflows/ci.yml` | Every PR: `ruff`; `pytest` with PostgreSQL; dbt slim CI + schema cleanup (only when the PR changes dbt, see above) |
+| `.github/workflows/ci.yml` | Every PR: `ruff`; `pytest` with PostgreSQL; dbt slim CI (only when the PR changes dbt, see above) |
+| `.github/workflows/ci-cleanup.yml` | PR merged or closed: drops its `PR_<number>_*` schemas |
 | `.github/pull_request_template.md` | PR description template, with the Definition of Done checklist (spec §16) |
 | `.pre-commit-config.yaml` | Checks before each local commit (ruff, whitespace, YAML, private keys) |
 | `.github/workflows/manifest.yml` | Every merge that changes `dbt/**`: `dbt parse --target prod`, saves the `prod-manifest` artifact |
 | `dbt/ci/profiles.yml` | CI profile (targets `ci`, `prod`); uses only `env_var()`, so it is committed |
-| `dbt/macros/generate_schema_name.sql` | For target `ci`, adds the `PR_<number>_` prefix |
-| `dbt/macros/drop_ci_schemas.sql` | Drops the PR's schemas; refuses to run if the target is not `ci` |
+| `dbt/macros/generate_schema_name.sql` | Every target but `prod` adds its schema as a prefix (`PR_<number>_` in CI) |
+| `dbt/macros/drop_target_schemas.sql` | Drops the target's schemas (a PR's in CI); refuses the `prod` target |
 | `infras/snowflake/init.sql` | The CI part is at the end of the file and runs with `make snowflake-init` |
 
 ## Notes
