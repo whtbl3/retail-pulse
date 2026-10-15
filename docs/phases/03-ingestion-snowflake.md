@@ -25,6 +25,11 @@ dlt and dbt should not run with an admin account: a small bug in the code could 
 the "room" (database, warehouse) and the "keys" (roles, users) with just enough privileges, using one SQL file
 ([`infras/snowflake/init.sql`](../../infras/snowflake/init.sql)) that is safe to run any number of times.
 
+> **Shortcut:** `make setup` runs this step and step 2 for you. It asks for the account identifier and the
+> `ACCOUNTADMIN` login (the password is passed to `snowflake-init` in memory and never saved), fixes the
+> placeholders in `.env`, and writes `.dlt/secrets.toml` with `private_key_path`. The sections below explain
+> what it does.
+
 ### Prerequisites
 
 You need a user with the `ACCOUNTADMIN` role and three variables in `.env` (see `.env.example`): `SNOWFLAKE_ACCOUNT`,
