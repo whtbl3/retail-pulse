@@ -41,6 +41,7 @@ to be read and reviewed as code.
 | Spec templates | `specs/_template/` | `spec.md`, `plan.md`, `tasks.md` with the sections every feature needs |
 | `/new-feature` skill | `.claude/skills/new-feature/SKILL.md` | Tells Claude how to fill the templates, and where to stop for review |
 | Process | `specs/README.md` | The flow from intent to merged PR, and when to skip it |
+| `spec-reviewer` subagent | `.claude/agents/spec-reviewer.md` | Checks the finished branch against the spec; see [code-review.md](code-review.md) |
 
 The skill has `disable-model-invocation: true`, so Claude never starts it on its own. You type
 `/new-feature` when you want it. A skill is advice Claude follows, not a hard rule: the review stops depend

@@ -15,6 +15,11 @@
 - [ ] No secrets or runtime files committed (`.env`, keys, `dbt/target/`...)
 - [ ] If a Final decision changed, the decision log (§17) is updated in the same PR
 
+## Review
+
+- [ ] Self-reviewed against `REVIEW.md`
+- [ ] Feature PR only: `spec-reviewer` report pasted below, no criterion left Missing
+
 ## How it was tested
 
 <!-- Commands run and their results -->

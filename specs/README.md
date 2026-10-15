@@ -22,7 +22,9 @@ feature spec stays here as the record of why the change was made.
 3. **Plan and tasks.** Run `/new-feature plan NNN`. Claude drafts `plan.md` and `tasks.md` from the
    approved spec. You review them.
 4. **Build.** Claude works through `tasks.md` on a `feat/NNN-short-name` branch, test first.
-5. **Review and merge.** The PR links the spec folder. Reviewers check the code against the acceptance
+5. **Review and merge.** Before the PR, the `spec-reviewer` subagent checks the branch against the spec
+   and reports each acceptance criterion as Met, Partly or Missing. The PR links the spec folder and that
+   report. Reviewers follow [`REVIEW.md`](../REVIEW.md) and check the code against the acceptance
    criteria, not just the diff. `Status` becomes `Implemented` in the same PR.
 
 Steps 2 and 3 end with a person reading the result. That review is the point of the process: a wrong
