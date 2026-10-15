@@ -1,5 +1,7 @@
 -- fct_sales_enriched must keep every fact row exactly once: same row count and same totals as fct_sales.
--- A difference means a dimension join dropped or duplicated rows.
+-- A difference means a dimension join dropped or duplicated rows. With the unique test on
+-- (transaction_id, line_number), an equal row count means every fact row appears exactly once, so any
+-- breakdown (by category, store or month) adds up to the same totals as fct_sales.
 select *
 from (
     select

@@ -1,5 +1,5 @@
 # Semantic layer (spec 002): every business metric is defined here, once.
-# `make preset-sync` copies them into Preset as saved metrics on the fct_sales_enriched dataset.
+# `make preset-zip` builds a Preset import ZIP that adds them as saved metrics to fct_sales_enriched.
 # All metrics read one model, fct_sales_enriched, because the sync cannot convert metrics that need joins.
 # fct_sales holds completed transactions only, so no metric filters on status.
 

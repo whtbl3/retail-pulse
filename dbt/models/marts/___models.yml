@@ -319,6 +319,16 @@ models:
         description: Transaction time in UTC, as in fct_sales.
       - name: full_date
         description: Local sale date (Asia/Ho_Chi_Minh) from dim_date; null for the -2 Unknown date.
+      - name: year
+        description: Calendar year of full_date, from dim_date.
+      - name: month
+        description: Month number of full_date, from dim_date.
+      - name: month_name
+        description: English month name, from dim_date.
+      - name: day_name
+        description: English weekday name, from dim_date.
+      - name: is_weekend
+        description: True on Saturday and Sunday, from dim_date.
       - name: store_name
         description: Store name from dim_store.
         data_tests: [not_null]
@@ -326,14 +336,16 @@ models:
         description: Product name from dim_product.
         data_tests: [not_null]
       - name: category_name
-        description: Category of the product version valid at the time of sale.
+        description: Current name of the category that the product version valid at the time of sale belongs to.
         data_tests: [not_null]
       - name: brand_name
-        description: Brand of the product version valid at the time of sale.
+        description: Current name of the brand that the product version valid at the time of sale belongs to.
         data_tests: [not_null]
       - name: promotion_label
         description: Promotion label from dim_promotion; "No promotion" when the line had none.
         data_tests: [not_null]
+      - name: promotion_type
+        description: percentage or fixed_amount, from dim_promotion; null for "No promotion" and Unknown.
       - name: payment_method_name
         description: Payment method from dim_payment_method.
         data_tests: [not_null]

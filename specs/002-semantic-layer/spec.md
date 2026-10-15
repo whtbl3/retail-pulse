@@ -1,8 +1,8 @@
 # 002: Semantic layer for metrics
 
-- Status: Approved (approved 2026-10-15, PhucLH)
+- Status: Implemented (approved 2026-10-15, PhucLH)
 - Intent: none (roadmap step 6, requested by the project owner)
-- Project-Spec sections affected: §4, §5, §10.3, §12, §14, §15, §17
+- Project-Spec sections affected: §4, §5, §10.2, §10.3, §12, §14, §15, §17
 
 ## Problem
 
@@ -87,9 +87,10 @@ Out of scope:
 
 | Decision | Status | Rationale |
 | --- | --- | --- |
-| Business metrics are defined once with MetricFlow in the dbt project | Proposed | One definition per metric, versioned and validated in CI, next to the models it reads; chosen by the project owner |
-| Preset stays the BI tool | Proposed | Owner's choice; the semantic layer serves it, it does not replace it |
-| Ratio metrics are ratios of sums | Proposed | An average of row-level ratios weights small sales like large ones and gives a wrong margin |
+| Business metrics are defined once with MetricFlow in the dbt project | Accepted | One definition per metric, versioned and validated in CI, next to the models it reads; chosen by the project owner |
+| Preset stays the BI tool | Accepted | Owner's choice; the semantic layer serves it, it does not replace it |
+| Metrics reach Preset as a dataset ZIP import, not through the Preset API | Accepted | The Preset API is Enterprise only (Q1); the import reuses the existing connection |
+| Ratio metrics are ratios of sums | Accepted | An average of row-level ratios weights small sales like large ones and gives a wrong margin |
 
 ## Answers to open questions
 

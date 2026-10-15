@@ -17,7 +17,7 @@ Plan: [plan.md](plan.md)
 - [x] T7: CI: run `mf validate-configs --skip-dw` after `dbt parse` in the `test` job.
 - [x] T8: `make preset-zip` builds a Preset dataset import ZIP from the metrics (the API sync needs
       Preset Enterprise; see plan step 4), with `tests/test_preset_export.py`.
-- [ ] T9: `make check` green; `spec-reviewer` report; open the PR.
+- [x] T9: `make check` green; `spec-reviewer` report; open the PR.
 - [ ] T10: Owner, after merge: the 23:00 run (or `make dbt-build`) creates `MARTS.FCT_SALES_ENRICHED`;
       export the `sales_enriched` dataset from Preset, `make preset-zip EXPORT=<zip>`, import the ZIP,
       rebuild the five charts on the metrics, rerun the reconciliation (AC5, AC6, AC7), delete the old

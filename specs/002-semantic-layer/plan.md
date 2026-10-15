@@ -126,7 +126,7 @@ Done during planning, then removed from the branch:
 | AC4 | `fct_sales_enriched` joins on `product_key`, the SCD2 version key; dbt test on row count and totals; manual check of one product whose cost changed |
 | AC5 | Manual: open each chart in Preset, metric is a saved metric |
 | AC6 | pytest: a metric in the semantic manifest appears in the bundle; manual: add a temporary metric, `make preset-zip`, import, it appears in Preset; then remove it |
-| AC7 | Manual: rerun the reconciliation table in docs/phases/07-preset.md |
+| AC7 | dbt: unique (`transaction_id`, `line_number`) plus equal row count and totals means each fact row appears once, so totals by category, store or month match too (R7); manual: rerun the reconciliation table in docs/phases/07-preset.md |
 
 ## Docs to update
 
@@ -137,3 +137,12 @@ Done during planning, then removed from the branch:
   add a metric, how to sync, and the one-time Preset steps.
 - `docs/phases/07-preset.md`: a note that the virtual dataset was replaced in phase 11.
 - `make help` and `CLAUDE.md` (`make preset-zip`).
+
+## Changes during the build
+
+- The wide model is `fct_sales_enriched`, not `sales_enriched`, to follow the §10.2 naming convention
+  (owner's choice).
+- Preset gets the metrics through a ZIP import instead of `preset-cli` sync: the Preset API is
+  Enterprise only (step 4).
+- `fct_sales_enriched` also keeps `year`, `month`, `month_name`, `day_name`, `is_weekend` and
+  `promotion_type`, which the old virtual dataset exposed, so existing filters keep working.
