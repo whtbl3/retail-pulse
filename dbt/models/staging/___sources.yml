@@ -48,11 +48,20 @@ sources:
       # Append incremental: several versions per id; SCD2 is built in intermediate
       # (no unique test because id repeats across versions)
       - name: product
+        config:
+          loaded_at_field: updated_at
+          freshness: &raw_freshness
+            # Spec 001: Dagster shows both levels as a warning; neither stops the run
+            warn_after: {count: 26, period: hour}
+            error_after: {count: 3, period: day}
         columns:
           - name: id
             data_tests:
               - not_null
       - name: employee
+        config:
+          loaded_at_field: updated_at
+          freshness: *raw_freshness
         columns:
           - name: id
             data_tests:
@@ -61,15 +70,16 @@ sources:
       # Append incremental: source of fct_sales
       - name: sales_transaction
         config:
-          loaded_at_field: created_at
-          freshness:
-            warn_after: {count: 1, period: day}
-            error_after: {count: 3, period: day}
+          loaded_at_field: updated_at
+          freshness: *raw_freshness
         columns:
           - name: transaction_id
             data_tests:
               - not_null
       - name: sales_transaction_item
+        config:
+          loaded_at_field: updated_at
+          freshness: *raw_freshness
         columns:
           - name: transaction_id
             data_tests:

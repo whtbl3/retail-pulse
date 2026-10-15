@@ -412,8 +412,24 @@ Jobs: `full_pipeline` (dlt, then dbt build) and `fct_sales_full_refresh` (`dbt b
 `fct_sales` only; run manually; never touches RAW). Schedule: `full_pipeline` runs daily at 23:00
 `Asia/Ho_Chi_Minh`, after store closing hours. If ingestion fails, dbt does not run.
 
-Retry policy, sensors, alerting, and deployment topology are TBD. The product simulator must be runnable
-independently and may later be scheduled as a separate upstream step.
+Operations (spec `specs/001-pipeline-operations/`):
+
+- **Deployment:** `dagster-webserver` and `dagster-daemon` run as Docker Compose services next to
+  PostgreSQL (`make dagster-up`), restart unless stopped, and keep run, event and schedule storage in a
+  `dagster` PostgreSQL database. Secrets are mounted read-only at run time, never built into the image.
+  `make dagster` remains for development.
+- **Retry:** only ingestion retries, 2 times, 5 minutes apart. dbt steps and quality checks run once.
+- **Freshness:** `sales_transaction`, `sales_transaction_item`, `product` and `employee` have dbt source
+  freshness on `updated_at` (warn after 26 hours, error after 3 days). A non-blocking Dagster check
+  reports both levels as warnings; stale RAW never stops the run.
+- **Alerting:** a run failure sensor on `full_pipeline` and `fct_sales_full_refresh` posts the job,
+  failed step, first error line and run link to a Slack incoming webhook (`SLACK_WEBHOOK_URL`). Without
+  it, the failure is only logged; an alert never fails a run.
+- **Runbook:** `docs/runbook.md` lists each failure type, how to recognise it, how to recover, and the
+  recovery steps that are never allowed.
+
+The product simulator must be runnable independently and may later be scheduled as a separate upstream
+step.
 
 ## 12. BI Specification
 
@@ -486,12 +502,14 @@ dbt tests are required for transformed models. Great Expectations validates the 
 | 7 | Preset dashboards |
 | 8 | Great Expectations checks on RAW (blocking asset checks in Dagster) |
 | 9 | GitHub Actions: lint and dbt slim CI, branch protection |
+| 10 | Operations: always-on Dagster in Docker, ingestion retry, RAW freshness, Slack failure alerts, runbook |
 
 ## 15. Repository Contracts
 
 Existing implementation locations:
 
-- `infras/docker-compose.yml`: local PostgreSQL runtime;
+- `infras/docker-compose.yml`: local PostgreSQL runtime and the Dagster webserver and daemon;
+- `Dockerfile`, `.dockerignore` and `infras/dagster/`: Dagster image, instance (`dagster.yaml`) and workspace;
 - `infras/postgres/init/01_schema.sql`: source DDL, constraints, indexes, and triggers;
 - `src/retail_pulse/oltp/db.py`: SQLAlchemy engine, settings, and session factory;
 - `src/retail_pulse/oltp/models.py`: ORM schema;
@@ -501,7 +519,8 @@ Existing implementation locations:
 - `src/retail_pulse/ingestion/pipelines.py`: dlt source and pipeline;
 - `src/retail_pulse/ingestion/clean.py`: dlt/Snowflake cleanup operations;
 - `src/retail_pulse/ingestion/snowflake_init.py` and `infras/snowflake/init.sql`: Snowflake warehouse, database, roles, users, and the CI environment;
-- `src/retail_pulse/orchestration/`: Dagster assets, jobs, schedule, and blocking quality checks;
+- `src/retail_pulse/orchestration/`: Dagster assets, jobs, schedule, blocking quality checks, RAW freshness
+  check (`freshness.py`) and Slack failure sensor (`alerts.py`);
 - `src/retail_pulse/quality/`: Great Expectations checks on RAW;
 - `dbt/`: dbt project (models, tests, macros) and `dbt/ci/profiles.yml` for CI;
 - `.github/workflows/`: CI (`ci.yml`) and production manifest (`manifest.yml`);
@@ -509,6 +528,7 @@ Existing implementation locations:
 - `tests/`: pytest suites; `conftest.py` provisions a disposable PostgreSQL test database;
 - `docs/README.md`: documentation index and phase roadmap;
 - `docs/phases/`: per-phase run and verification guides;
+- `docs/runbook.md`: recovery steps for each pipeline failure type;
 - `docs/design/`: component design and implementation notes;
 - `CLAUDE.md` and `.claude/` (settings, hooks, rules, skills, agents): Claude Code instructions and guardrails,
   explained in `docs/claude-code.md`;
@@ -559,6 +579,9 @@ resulting analytics in Preset.
 | Every change reaches `main` through a pull request; CI runs dbt on a separate database | Final | CI must not touch real data and must gate merges |
 | PRs are reviewed by `REVIEW.md`; feature PRs carry a `spec-reviewer` report; findings never approve or block, a person approves | Final | Review effort goes to intent and risk, while rules that protect RAW and SCD2 history are checked on every PR |
 | New features start from a spec in `specs/NNN-*/` approved before code; Spec Kit is trialled, not adopted | Final | Catches a wrong problem statement before the code; a light template fits the project size |
+| Dagster runs as Docker Compose services next to PostgreSQL, with run storage in PostgreSQL | Final | Docker Compose is the only deployment target; PostgreSQL storage keeps history across restarts (spec 001) |
+| Only ingestion is retried (2 times, 5 minutes apart) | Final | dbt and data-quality failures are deterministic; retrying them hides the error and costs warehouse time (spec 001) |
+| Stale RAW warns, never blocks; failures alert on Slack through an incoming webhook | Final | A quiet day is not an error; the owner learns of a failure without opening the UI (spec 001) |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.
