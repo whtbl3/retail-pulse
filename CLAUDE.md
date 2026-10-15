@@ -35,6 +35,14 @@ Before calling a change done, run `make check` and show the output.
 - Analytics use `completed` transactions only. Customer, inventory, returns and Kubernetes are out of scope.
 - Never commit secrets: `.env`, `.dlt/secrets.toml`, `dbt/profiles.yml`, `*.p8`, `.snowflake/`.
 
+## Ask, do not guess
+
+- When the user's intent, a requirement or a choice between options is unclear, ask before acting:
+  one short question, the options, and your recommendation. Do not fill the gap with an assumption.
+- Before stating a fact about an external tool (version support, licence, price, plan, auth method,
+  default behavior), check its current docs or source code. If you could not check it, say so
+  plainly and ask, instead of presenting a guess as fact.
+
 ## Workflow
 
 - Every change reaches `main` through a pull request with green `lint`, `test` and `dbt-slim-ci` checks.
