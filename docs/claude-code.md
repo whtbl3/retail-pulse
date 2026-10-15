@@ -13,6 +13,8 @@ before the later steps (quality gates in CI, a spec for each feature, review, op
 | `.claude/settings.json` | Permissions (allow, ask, deny) and hooks | Enforced by Claude Code; Claude cannot skip them on its own |
 | `.claude/hooks/protect_secrets.py` | Hook that blocks edits to secret files | Before every time Claude edits or creates a file |
 | `.claude/hooks/ruff_after_edit.py` | Hook that formats and lints Python files | After every time Claude edits a `.py` file |
+| `.claude/agents/spec-reviewer.md` | Subagent that checks a branch against its spec, report only | When you ask for it, and in step 3 of `/new-feature` (see [code-review.md](code-review.md)) |
+| `REVIEW.md` | What counts as Important vs Nit in a review | Whenever Claude or a person reviews a PR |
 | `.claude/skills/new-feature/SKILL.md` | Steps for starting a feature from a spec | Only when you type `/new-feature` (see [spec-driven-development.md](spec-driven-development.md)) |
 
 The most important boundary: `CLAUDE.md` and rules are **advice**; Claude can forget or misread them.
