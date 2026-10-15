@@ -32,3 +32,11 @@ def test_daily_schedule_targets_full_pipeline():
     schedule = defs.resolve_schedule_def("full_pipeline_schedule")
     assert schedule.cron_schedule == "0 23 * * *"
     assert schedule.execution_timezone == "Asia/Ho_Chi_Minh"
+
+
+def test_dagster_builds_the_production_target():
+    from retail_pulse.orchestration.dbt_assets import dbt_project
+    from retail_pulse.orchestration.definitions import defs
+
+    assert dbt_project.target == "prod"
+    assert defs.resources["dbt"].target == "prod"

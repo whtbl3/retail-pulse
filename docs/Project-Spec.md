@@ -398,6 +398,30 @@ Consequences:
   destroys all SCD2 history;
 - the dimension models are idempotent: `dbt build --full-refresh` always rebuilds the same result.
 
+### 10.5 Environments
+
+dbt has three targets (spec `specs/003-dbt-environments/`):
+
+| Target | Who uses it | Writes to | Builds |
+| --- | --- | --- | --- |
+| `dev` (default) | a developer, `make dbt-build` | `RETAIL_PULSE.DBT_<NAME>_STAGING`, `_INTERMEDIATE`, `_MARTS` | changed models and their dependents |
+| `prod` | Dagster; by hand only `make dbt-build-prod` and `make dbt-full-refresh` | `RETAIL_PULSE.STAGING`, `INTERMEDIATE`, `MARTS` | every model |
+| `ci` | GitHub Actions | `RETAIL_PULSE_CI.PR_<n>_STAGING`, `_INTERMEDIATE`, `_MARTS` | changed models and their dependents |
+
+- Only `prod` uses the layer names as schema names. Every other target writes `<target schema>_<layer>`;
+  a non-prod target whose schema is a production name is refused.
+- `<NAME>` comes from `DBT_DEV_SCHEMA` in `.env` (`make setup` sets it from the user name), so two
+  developers never share schemas.
+- Dev and CI builds read unchanged models, and RAW, from production through `--defer` against a
+  production manifest; they never write a production schema. Locally the manifest is parsed from
+  `origin/main` (`make dbt-prod-state`); CI downloads the one `manifest.yml` saves after each merge.
+- Read access to the marts is declared in `dbt_project.yml` (`grants`) and applied by every prod build:
+  `SELECT` for `REPORTER` (Preset) and `CI_RUNNER` (slim CI defers to the marts). The list must hold every
+  role that reads the marts, because the incremental `fct_sales` revokes grants not in it. Dev and CI
+  declare no grants, and `REPORTER` has no access to their schemas.
+- A pull request's schemas stay after its CI run and are dropped when it is merged or closed
+  (`ci-cleanup.yml`). `make dbt-dev-clean` drops a developer's own schemas; both refuse production.
+
 ## 11. Orchestration Specification
 
 Dagster is introduced after ingestion and dbt models work independently. It represents dlt and dbt work
@@ -408,7 +432,8 @@ Delivered scope:
 1. run the PostgreSQL-to-Snowflake dlt ingestion, one asset per RAW table;
 2. run Great Expectations checks on the incremental RAW tables as blocking asset checks, so dbt does
    not run on RAW data that fails them;
-3. run dbt models (including SCD2 dimensions) after successful ingestion;
+3. run dbt models (including SCD2 dimensions) after successful ingestion, always with the `prod` target
+   (§10.5);
 4. run dbt tests after the models build (dbt `build`; tests appear as asset checks); and
 5. expose run status and materialization metadata through Dagster.
 
@@ -495,7 +520,9 @@ dbt tests are required for transformed models. Great Expectations validates the 
 - dlt uses the least-privilege `LOADER` role.
 - dbt uses a separate transformation role.
 - Snowflake development resources should remain small and auto-suspend when idle.
-- Preset uses a separate read-only role (`REPORTER`).
+- Preset uses a separate read-only role (`REPORTER`). Its `SELECT` on the marts is declared in the dbt
+  project and reapplied by every prod build; the manual future grant from phase 7 stays as a safety net.
+- Developers build into their own schemas, never production (§10.5).
 - CI uses a dedicated database, warehouse, and role (`RETAIL_PULSE_CI`, `RETAIL_CI_WH`, `CI_RUNNER`) with
   read-only access to the real data and a resource monitor.
 - Changes reach `main` only through pull requests with required status checks.
@@ -516,6 +543,7 @@ dbt tests are required for transformed models. Great Expectations validates the 
 | 9 | GitHub Actions: lint and dbt slim CI, branch protection |
 | 10 | Operations: always-on Dagster in Docker, ingestion retry, RAW freshness, Slack failure alerts, runbook |
 | 11 | Semantic layer: MetricFlow metrics in dbt, imported into Preset |
+| 12 | dbt environments: per-developer dev schemas, prod only from Dagster, grants in dbt, PR schemas kept until close |
 
 ## 15. Repository Contracts
 
@@ -535,10 +563,12 @@ Existing implementation locations:
 - `src/retail_pulse/orchestration/`: Dagster assets, jobs, schedule, blocking quality checks, RAW freshness
   check (`freshness.py`) and Slack failure sensor (`alerts.py`);
 - `src/retail_pulse/quality/`: Great Expectations checks on RAW;
-- `dbt/`: dbt project (models, tests, macros) and `dbt/ci/profiles.yml` for CI;
+- `dbt/`: dbt project (models, tests, macros) and `dbt/ci/profiles.yml` for CI (targets `ci` and `prod`);
+  `dbt/profiles.yml.example` has the `dev` (default) and `prod` targets;
 - `dbt/models/semantic/`: MetricFlow semantic model and metrics;
 - `src/retail_pulse/semantic/`: builds the Preset dataset import ZIP from the metrics (`make preset-zip`);
-- `.github/workflows/`: CI (`ci.yml`) and production manifest (`manifest.yml`);
+- `.github/workflows/`: CI (`ci.yml`), production manifest (`manifest.yml`) and PR schema cleanup
+  (`ci-cleanup.yml`);
 - `.env.example`, `.dlt/secrets.toml.example`, `dbt/profiles.yml.example`: configuration templates (real files are never committed);
 - `tests/`: pytest suites; `conftest.py` provisions a disposable PostgreSQL test database;
 - `docs/README.md`: documentation index and phase roadmap;
@@ -600,6 +630,10 @@ resulting analytics in Preset.
 | Business metrics are defined once with MetricFlow in the dbt project; Preset stays the BI tool | Final | One versioned, CI-validated definition per metric, so teams and charts cannot drift apart (spec 002) |
 | Metrics reach Preset as a dataset ZIP import, not through the Preset API | Final | The Preset API is Enterprise only; the import works on the owner's plan and reuses the existing connection (spec 002) |
 | Ratio metrics are ratios of sums | Final | An average of row-level ratios weights small sales like large ones and gives a wrong margin (spec 002) |
+| Developers build dbt into their own schemas (`DBT_<NAME>_*`, same database); only Dagster builds production by default | Final | A local build must not change what the dashboard shows (spec 003) |
+| A development build builds only changed models and reads the rest from production | Final | Cheapest option that still runs on real data; same mechanism as slim CI (spec 003) |
+| Read grants on the marts are declared in the dbt project and applied on every prod build; the manual future grant stays as a safety net | Final | Grants made by hand are lost when objects or databases are recreated (spec 003) |
+| CI schemas live for the life of the pull request | Final | Reviewers can inspect what a PR built; cleanup still happens on merge or close (spec 003) |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.

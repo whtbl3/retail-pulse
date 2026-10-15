@@ -22,5 +22,5 @@ retail_pulse:
       private_key_path: "{{ env_var('CI_PRIVATE_KEY_PATH') }}"
       database: RETAIL_PULSE
       warehouse: RETAIL_CI_WH
-      schema: DBT_DEV
+      schema: PUBLIC
       threads: 4

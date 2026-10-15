@@ -77,7 +77,8 @@ def retail_raw_assets(context, dlt_res: DagsterDltResource):
 
 ```python
 dbt_project = DbtProject(project_dir=Path(__file__).parents[3] / "dbt",
-                         profiles_dir=os.environ.get("DBT_PROFILES_DIR", str(Path.home() / ".dbt")))
+                         profiles_dir=os.environ.get("DBT_PROFILES_DIR", str(Path.home() / ".dbt")),
+                         target="prod")
 dbt_project.prepare_if_dev()
 
 @dbt_assets(manifest=dbt_project.manifest_path)
@@ -93,6 +94,9 @@ def retail_dbt_assets(context, dbt: DbtCliResource):
 - `dbt.cli(["build"])` runs a real `dbt build` underneath (models and tests) and attaches the results to each asset. dbt
   tests show up as **asset checks** on the right model, so you see at once which model has a failing test.
 - Dagster uses the dbt-core in `.venv`, not the dbt in `~/.local/bin`.
+- `target="prod"`: Dagster is the production pipeline and always builds `STAGING`, `INTERMEDIATE`, `MARTS`; the
+  `DbtCliResource` inherits the target from `DbtProject`. A developer's `make dbt-build` uses `dev`
+  ([phase 12](12-environments.md)), so the profile Dagster mounts must have a `prod` output.
 
 **Lineage connects from Postgres to `fct_sales`**, verified on the graph (40 assets: 10 RAW assets, 20 dbt assets, and 10
 `sql_database_<table>` assets created by dagster-dlt to represent the source tables in Postgres):

@@ -112,6 +112,12 @@ jobs:
             gh run download "$RUN_ID" --name prod-manifest --dir state
           fi
 
+      # A re-run starts from empty schemas. The schemas stay after the run so reviewers can inspect them;
+      # ci-cleanup.yml drops them when the PR is merged or closed (spec 003).
+      - name: Drop the PR schemas left by an earlier run
+        if: steps.changes.outputs.dbt == 'true'
+        run: uv run dbt run-operation drop_target_schemas --project-dir dbt
+
       - name: dbt build (slim if a manifest exists, otherwise full build)
         if: steps.changes.outputs.dbt == 'true'
         run: |
@@ -121,7 +127,3 @@ jobs:
             echo "No production manifest yet, running a full build."
             uv run dbt build --project-dir dbt
           fi
-
-      - name: Drop the PR schemas
-        if: always() && steps.changes.outputs.dbt == 'true'
-        run: uv run dbt run-operation drop_ci_schemas --project-dir dbt

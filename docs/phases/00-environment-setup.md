@@ -53,9 +53,9 @@ You create the real file yourself from the template.
 
 | Real file (not committed) | Template (committed) | What it contains | Who reads it |
 |---|---|---|---|
-| `.env` | `.env.example` | PostgreSQL connection, Snowflake account, dbt key path, admin account (only for setup), Preset password | Python, Docker Compose, dbt, Great Expectations |
+| `.env` | `.env.example` | PostgreSQL connection, Snowflake account, dbt key path and dev schema (`DBT_DEV_SCHEMA`), admin account (only for setup), Preset password | Python, Docker Compose, dbt, Great Expectations |
 | `.dlt/secrets.toml` | `.dlt/secrets.toml.example` | Credentials of the `DLT_LOADER` user | dlt |
-| `~/.dbt/profiles.yml` | `dbt/profiles.yml.example` | How dbt connects to Snowflake (only references environment variables) | dbt |
+| `~/.dbt/profiles.yml` | `dbt/profiles.yml.example` | How dbt connects to Snowflake: targets `dev` (default) and `prod` (only references environment variables) | dbt |
 | `.snowflake/*.p8` | no template | Private key of each user, created by `make snowflake-init` | dlt, dbt, CI |
 | GitHub Secrets | see [phase 9](09-dataops-ci.md) | `SNOWFLAKE_ACCOUNT`, `CI_PRIVATE_KEY` | CI |
 

@@ -4,7 +4,8 @@
 the example placeholders, and never overwrites a config file that already exists.
 
 1. `.env`: created from `.env.example` if missing; the Snowflake account and the dbt key path are
-   filled in; a new `.env` also gets a random Postgres password.
+   filled in, and so is `DBT_DEV_SCHEMA` (your own dbt dev schemas, from your user name); a new
+   `.env` also gets a random Postgres password.
 2. Snowflake: `snowflake-init` creates the key pairs in `.snowflake/` and the users, roles and
    warehouse. The admin password is passed to it in memory and never written to disk.
 3. `.dlt/secrets.toml` and `~/.dbt/profiles.yml`: created from their examples if missing.
@@ -25,6 +26,7 @@ from pathlib import Path
 REPO = Path(__file__).parents[2]
 ACCOUNT_PLACEHOLDER = "ORGNAME-ACCOUNTNAME"
 KEY_PATH_PLACEHOLDER = "/absolute/path/to/"
+DEV_SCHEMA_PLACEHOLDER = "DBT_YOURNAME"
 
 
 def normalize_account(raw: str) -> str:
@@ -53,9 +55,16 @@ def set_env(text: str, key: str, value: str) -> str:
     return text.rstrip("\n") + f"\n{line}\n"
 
 
+def dev_schema_name(user: str) -> str:
+    """The developer's own dbt schema prefix (spec 003): `phuc.lh` becomes `DBT_PHUC_LH`."""
+    return "DBT_" + re.sub(r"[^A-Z0-9]+", "_", user.upper()).strip("_")
+
+
 def is_placeholder(key: str, value: str | None) -> bool:
     if not value:
         return True
+    if key == "DBT_DEV_SCHEMA":
+        return value == DEV_SCHEMA_PLACEHOLDER
     if key == "SNOWFLAKE_ACCOUNT":
         return value == ACCOUNT_PLACEHOLDER
     if key == "DBT_PRIVATE_KEY_PATH":
@@ -95,6 +104,11 @@ def prepare_env(repo: Path, ask: Callable[[str], str]) -> tuple[dict[str, str], 
         key_path = repo / ".snowflake" / "dbt_transformer.p8"
         text = set_env(text, "DBT_PRIVATE_KEY_PATH", str(key_path))
         changes.append(f".env: DBT_PRIVATE_KEY_PATH={key_path}")
+
+    if is_placeholder("DBT_DEV_SCHEMA", values.get("DBT_DEV_SCHEMA")):
+        schema = dev_schema_name(getpass.getuser())
+        text = set_env(text, "DBT_DEV_SCHEMA", schema)
+        changes.append(f".env: DBT_DEV_SCHEMA={schema} (your dbt dev schemas {schema}_*)")
 
     if changes:
         env_path.write_text(text)
@@ -150,8 +164,20 @@ def main(argv: list[str] | None = None, ask: Callable[[str], str] = input) -> No
     profile = (repo / "dbt" / "profiles.yml.example").read_text()
     if write_if_missing(profiles_dir / "profiles.yml", profile):
         changes.append(f"{profiles_dir / 'profiles.yml'} created")
-    elif "retail_pulse:" not in (profiles_dir / "profiles.yml").read_text():
-        print(f"Note: add the retail_pulse profile from dbt/profiles.yml.example to {profiles_dir}")
+    else:
+        profile_path = profiles_dir / "profiles.yml"
+        existing = profile_path.read_text()
+        if "retail_pulse:" not in existing:
+            print(
+                f"Note: add the retail_pulse profile in dbt/profiles.yml.example to {profile_path}"
+            )
+        elif "prod:" not in existing or "DBT_DEV_SCHEMA" not in existing:
+            # Never overwritten: the file may hold other projects or the developer's own edits
+            print(
+                f"Note: {profile_path} is from before spec 003. Copy the dev and prod outputs from "
+                "dbt/profiles.yml.example: dev uses schema env_var('DBT_DEV_SCHEMA'), and Dagster "
+                "needs the prod output (docs/phases/12-environments.md)."
+            )
 
     print("\nSetup done." if changes or not args.skip_snowflake else "\nNothing to change.")
     for change in changes:

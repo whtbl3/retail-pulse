@@ -27,6 +27,8 @@ GRANT SELECT ON FUTURE TABLES IN SCHEMA RETAIL_PULSE.MARTS TO ROLE REPORTER;
 
 - **`FUTURE TABLES`:** dbt rebuilds tables on each run (`--full-refresh` creates a new table). The grant also covers
   tables created later. *If it is missing:* after each dbt rebuild, Preset reports it has no read permission.
+  Since [phase 12](12-environments.md) the `SELECT` is also declared in `dbt_project.yml` and reapplied by every prod
+  build; this grant stays as a safety net. The `USAGE` grants above are still needed once.
 - **Why this is kept out of `infras/snowflake/init.sql`:** Preset is optional, and not everyone running the project uses
   it. `init.sql` only holds what the pipeline requires (dlt, dbt, CI). To merge them, append the statements above to the
   end of `init.sql`; `MARTS` is already created there, so there is no ordering problem.

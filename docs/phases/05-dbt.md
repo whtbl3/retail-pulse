@@ -48,8 +48,9 @@ other) and by the XSMALL `RETAIL_WH` warehouse, which queues queries. More threa
 independent branches. To go faster, consider the warehouse size first.
 
 **One schema per layer, overridden by `generate_schema_name`.** By default dbt joins `target.schema` with the declared
-schema (`DBT_DEV_STAGING`). The project macro drops that join, so the schemas are exactly `STAGING`, `INTERMEDIATE`, `MARTS`
-(only the `ci` target of [phase 9](09-dataops-ci.md) adds a `PR_<number>_` prefix).
+schema (`DBT_PHUCLH_STAGING`). The project macro drops that join for the `prod` target only, so production schemas are
+exactly `STAGING`, `INTERMEDIATE`, `MARTS`. Your own builds (`dev`) and CI keep the join; see
+[phase 12](12-environments.md).
 
 | Layer | `+materialized` | Reason |
 |---|---|---|
@@ -231,7 +232,7 @@ cd dbt && uv run dbt build -s intermediate     # 2 tables and tests; expect ERRO
 Run one `stream` cycle (changes the price of 5 products, moves employee 51 from store 7 to store 5), reload, then build:
 
 ```bash
-make stream && make ingest && make dbt-build
+make stream && make ingest && make dbt-build-prod
 ```
 
 | Quantity | Before | After | Meaning |
@@ -335,7 +336,7 @@ Further reading: [Configure incremental models](https://docs.getdbt.com/docs/bui
 ### Verify incremental with new transactions
 
 ```bash
-make stream-sales && make ingest && make dbt-build
+make stream-sales && make ingest && make dbt-build-prod
 ```
 
 One real run (300 new transactions, from 2026-10-08 13:58 to 2026-10-09 21:53, local time):
@@ -473,9 +474,11 @@ Run from the repo root; the `dbt-*` commands load `.env` and use the dbt in `.ve
 |---|---|
 | `make dbt-deps` | Installs dbt packages (`dbt_utils`) into `dbt/dbt_packages` |
 | `make dbt-parse` | Generates `dbt/target/manifest.json` (Dagster needs this file, see [phase 6](06-dagster.md)) |
-| `make dbt-build` | Full-project `dbt build` (models and tests); needs RAW to have data |
-| `make dbt-test` | Runs tests only |
-| `make dbt-full-refresh` | Rebuilds `fct_sales` from scratch, fixing `-2` key rows; does not touch RAW |
+| `make dbt-build` | Dev: builds the models you changed and their dependents into your `DBT_<NAME>_*` schemas ([phase 12](12-environments.md)); `SELECT=<selector>` to choose |
+| `make dbt-build-prod` | **Production**: full-project `dbt build` (models and tests); needs RAW to have data |
+| `make dbt-test` | Dev: runs the tests of the models you changed |
+| `make dbt-full-refresh` | **Production**: rebuilds `fct_sales` from scratch, fixing `-2` key rows; does not touch RAW |
+| `make dbt-dev-clean` | Drops your `DBT_<NAME>_*` schemas |
 | `make dbt-docs` | Generates and serves dbt docs (lineage) at `http://localhost:8080` |
 | `make clean` | Deletes generated files (cache, `dbt/target`, `dbt/logs`); does not touch `.env`, `.venv`, keys, `dbt_packages`; afterwards run `make dbt-parse` so Dagster has a manifest |
 

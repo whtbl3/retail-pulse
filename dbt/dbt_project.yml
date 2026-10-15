@@ -33,3 +33,7 @@ models:
     marts:
       +materialized: table
       +schema: marts
+      # Read access for Preset (REPORTER) and slim CI (CI_RUNNER), production only (spec 003).
+      # The list must hold every role that reads the marts: the incremental fct_sales revokes, on each
+      # run, any grant that is not listed here. Dev and CI declare none.
+      +grants: "{{ {'select': ['REPORTER', 'CI_RUNNER']} if target.name == 'prod' else {} }}"

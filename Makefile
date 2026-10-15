@@ -8,7 +8,7 @@ DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt runs from dbt/ and loads .env first because profiles.yml uses env_var(); dbt comes from .venv (via uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install setup up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster dagster-up dagster-down dagster-logs preset-zip clean
+.PHONY: help install setup up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-prod-state dbt-build dbt-build-prod dbt-test dbt-full-refresh dbt-dev-clean dbt-docs quality dagster dagster-up dagster-down dagster-logs preset-zip clean
 
 help: ## List the commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -79,14 +79,34 @@ dbt-deps: ## Install dbt packages (dbt_utils) into dbt/dbt_packages
 dbt-parse: ## Generate dbt/target/manifest.json (Dagster needs it; `make dagster` builds it, non-dev validate/runs do not)
 	$(DBT) parse
 
-dbt-build: ## dbt build the whole project (models + tests); needs data in RAW
-	$(DBT) build
+# Dev builds (spec 003) build only what you changed (SELECT) into your DBT_<NAME>_* schemas and read every
+# other model, and RAW, from production. Production is built only by Dagster and the two prod targets below.
+SELECT ?= state:modified+
+PROD_STATE_WORKTREE := dbt/target/main-worktree
 
-dbt-test: ## Run dbt tests only
-	$(DBT) test
+dbt-prod-state: ## Dev: describe production (manifest of origin/main, parse only, no query) for the dev build
+	git fetch -q origin main
+	git worktree remove --force $(PROD_STATE_WORKTREE) 2>/dev/null || true
+	git worktree prune
+	git worktree add -q --detach $(PROD_STATE_WORKTREE) origin/main
+	ln -s $(CURDIR)/dbt/dbt_packages $(PROD_STATE_WORKTREE)/dbt/dbt_packages
+	set -a && . ./.env && set +a && uv run dbt parse --project-dir $(PROD_STATE_WORKTREE)/dbt --target prod --target-path $(CURDIR)/dbt/target/prod-state --log-path $(CURDIR)/dbt/logs
+	git worktree remove --force $(PROD_STATE_WORKTREE)
 
-dbt-full-refresh: ## Rebuild fct_sales from scratch (fixes -2 key rows); leaves RAW alone
-	$(DBT) build -s fct_sales --full-refresh
+dbt-build: dbt-prod-state ## Dev: build the models you changed and their dependents into DBT_<NAME>_*; SELECT=<selector> to choose
+	$(DBT) build --select '$(SELECT)' --defer --state target/prod-state
+
+dbt-build-prod: ## PRODUCTION: build every model into STAGING/INTERMEDIATE/MARTS (what Dagster runs at 23:00)
+	$(DBT) build --target prod
+
+dbt-test: dbt-prod-state ## Dev: run the tests of the models you changed (SELECT) against your DBT_<NAME>_* schemas
+	$(DBT) test --select '$(SELECT)' --defer --state target/prod-state
+
+dbt-full-refresh: ## PRODUCTION: rebuild fct_sales from scratch (fixes -2 key rows); leaves RAW alone
+	$(DBT) build -s fct_sales --full-refresh --target prod
+
+dbt-dev-clean: ## Dev: drop your DBT_<NAME>_* schemas (refuses production)
+	$(DBT) run-operation drop_target_schemas
 
 dbt-docs: ## Generate and serve dbt docs (lineage) at http://localhost:8080
 	$(DBT) docs generate && $(DBT) docs serve
