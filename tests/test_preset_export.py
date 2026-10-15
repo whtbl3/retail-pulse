@@ -136,3 +136,21 @@ def test_an_export_that_is_not_one_dataset_on_one_connection_is_refused(
 def test_the_real_metrics_convert_to_the_expected_expressions():
     expressions = {m["name"]: pe.to_expression(pe.explain(m["name"])) for m in pe.load_metrics()}
     assert expressions == EXPECTED
+
+
+def test_profiles_come_from_the_env_var_then_the_project_then_home(tmp_path, monkeypatch):
+    """`mf` only looks in DBT_PROFILES_DIR and the current folder; dbt also looks in ~/.dbt."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project = tmp_path / "dbt"
+    project.mkdir()
+    assert pe.profiles_dir(project, env={}) == tmp_path / "home" / ".dbt"
+    (project / "profiles.yml").write_text("retail_pulse: {}\n")
+    assert pe.profiles_dir(project, env={}) == project.resolve()
+    custom = tmp_path / "ci"
+    assert pe.profiles_dir(project, env={"DBT_PROFILES_DIR": str(custom)}) == custom.resolve()
+
+
+def test_an_mf_failure_shows_its_error(tmp_path):
+    (tmp_path / "dbt_project.yml").write_text("name: x\nprofile: no_such_profile\n")
+    with pytest.raises(ValueError, match="mf query --explain failed for metric net_revenue"):
+        pe.explain("net_revenue", tmp_path)
