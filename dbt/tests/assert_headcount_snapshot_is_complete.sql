@@ -4,21 +4,28 @@ with snapshot as (
     select * from {{ ref('fct_store_headcount_monthly') }}
 ),
 
-expected as (
+summary as (
     select
-        (select count(*) from {{ ref('dim_store') }} where store_key <> -2)
-        * (datediff(month, '{{ var("date_start") }}'::date, max(as_of_date)) + 1) as expected_rows,
-        date_trunc('month', max(as_of_date))                                        as as_of_month
+        count(*)                                                   as actual_rows,
+        count(distinct as_of_date)                                 as as_of_dates,
+        min(month_start)                                           as first_month,
+        max(month_start)                                           as last_month,
+        date_trunc('month', max(as_of_date))                       as as_of_month,
+        datediff(month, '{{ var("date_start") }}'::date, max(as_of_date)) + 1 as expected_months,
+        -- Rows whose flag is wrong: closed in the as-of month, or open in any other month
+        count_if(is_month_closed = (month_start = date_trunc('month', as_of_date))) as wrong_flags
     from snapshot
+),
+
+stores as (
+    select count(*) as store_count from {{ ref('dim_store') }} where store_key <> -2
 )
 
 select *
-from expected e
-where e.expected_rows <> (select count(*) from snapshot)
-   or (select min(month_start) from snapshot) <> '{{ var("date_start") }}'::date
-   or (select max(month_start) from snapshot) <> e.as_of_month
-   or exists (
-       select 1 from snapshot
-       where is_month_closed = (month_start = e.as_of_month)
-   )
-   or (select count(distinct as_of_date) from snapshot) <> 1
+from summary
+cross join stores
+where actual_rows <> store_count * expected_months
+   or as_of_dates <> 1
+   or first_month <> '{{ var("date_start") }}'::date
+   or last_month <> as_of_month
+   or wrong_flags > 0
