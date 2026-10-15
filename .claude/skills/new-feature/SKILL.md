@@ -49,5 +49,6 @@ only when they say it is approved.
 ## Stage 3: build
 
 Work through `tasks.md` in order, ticking tasks off. Run `make check` before calling the feature done.
+Then run the `spec-reviewer` subagent and fix what it reports as Missing or Partly before opening the PR.
 In the PR, link the spec folder under "Why", set the spec to `Status: Implemented`, and update the
 affected Project-Spec sections in the same PR.
