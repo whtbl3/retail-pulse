@@ -1,8 +1,8 @@
 # 001: Pipeline operations
 
-- Status: Approved (2026-10-15, PhucLH)
+- Status: Implemented (approved 2026-10-15, PhucLH)
 - Intent: none (roadmap step 5)
-- Project-Spec sections affected: §11, §15, §17
+- Project-Spec sections affected: §11, §14, §15, §17
 
 ## Problem
 

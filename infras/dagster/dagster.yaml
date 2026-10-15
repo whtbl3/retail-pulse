@@ -1,0 +1,34 @@
+# Dagster instance for the Docker services (spec 001). Runs, events and schedule state live in the
+# `dagster` database on the Postgres container, so history survives restarts.
+storage:
+  postgres:
+    postgres_db:
+      hostname: postgres
+      port: 5432
+      username: {env: PG_USER}
+      password: {env: PG_PASSWORD}
+      db_name: dagster
+      # SQLAlchemy 2.1 defaults to psycopg 3, which dagster-postgres does not support
+      scheme: postgresql+psycopg2
+
+# Runs wait in a queue and the daemon starts them one at a time, so two runs never load RAW together
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 1
+
+local_artifact_storage:
+  module: dagster.core.storage.root
+  class: LocalArtifactStorage
+  config:
+    base_dir: /opt/dagster/storage
+
+compute_logs:
+  module: dagster.core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: /opt/dagster/storage/logs
+
+telemetry:
+  enabled: false

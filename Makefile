@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
-COMPOSE := docker compose --env-file .env -f infras/docker-compose.yml
+# REPO_DIR lets the Dagster containers mount .snowflake/ at the same absolute path as on the host
+COMPOSE := REPO_DIR=$(CURDIR) docker compose --env-file .env -f infras/docker-compose.yml
 DAYS ?= 365
 ROWS ?= 100000
 SALES ?= 300
@@ -7,7 +8,7 @@ DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt runs from dbt/ and loads .env first because profiles.yml uses env_var(); dbt comes from .venv (via uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster clean
+.PHONY: help install up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster dagster-up dagster-down dagster-logs clean
 
 help: ## List the commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -87,8 +88,18 @@ dbt-full-refresh: ## Rebuild fct_sales from scratch (fixes -2 key rows); leaves 
 dbt-docs: ## Generate and serve dbt docs (lineage) at http://localhost:8080
 	$(DBT) docs generate && $(DBT) docs serve
 
-dagster: ## Open Dagster (http://localhost:3000); run history is lost on exit unless DAGSTER_HOME is set
+dagster: ## Dev mode: Dagster in this terminal (http://localhost:3000); stop dagster-up first, both use port 3000
 	uv run dagster dev
+
+dagster-up: up ## Build and start the always-on Dagster UI (http://localhost:3000) and scheduler in Docker
+	@$(COMPOSE) exec -T postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT 1 FROM pg_database WHERE datname = '"'"'dagster'"'"'" | grep -q 1 || createdb -U "$$POSTGRES_USER" dagster'
+	$(COMPOSE) up -d --build --wait dagster-webserver dagster-daemon
+
+dagster-down: ## Stop the Dagster containers (keeps run history and Postgres running)
+	$(COMPOSE) stop dagster-webserver dagster-daemon
+
+dagster-logs: ## Follow the Dagster daemon and webserver logs
+	$(COMPOSE) logs -f --tail 100 dagster-daemon dagster-webserver
 
 clean: ## Delete generated files (caches, dbt/target, dbt/logs); keeps .env, .venv, keys, dbt_packages
 	rm -rf .pytest_cache .ruff_cache logs dbt/target dbt/logs dbt/package-lock.concurrent-update-lock
