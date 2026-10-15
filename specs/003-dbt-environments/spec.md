@@ -1,6 +1,6 @@
 # 003: Separate dbt development and production
 
-- Status: Draft (all questions answered, awaiting approval)
+- Status: Approved (2026-10-15, PhucLH)
 - Intent: none (requested by the project owner after the dbt topics review)
 - Project-Spec sections affected: §10 (new subsection on environments), §11, §13.4, §14, §15, §17
 
