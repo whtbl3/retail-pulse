@@ -22,7 +22,11 @@ from retail_pulse.ingestion.pipelines import APPEND
 FRESHNESS_TABLES: list[str] = list(APPEND)
 
 
-def results_from_sources(sources: dict) -> Iterator[AssetCheckResult]:
+MISSING = "missing from sources.json"
+DBT_FAILED = "dbt source freshness failed before writing sources.json; see the step's stdout"
+
+
+def results_from_sources(sources: dict, missing: str = MISSING) -> Iterator[AssetCheckResult]:
     """Turn dbt's target/sources.json into one check result per incremental RAW table."""
     by_table = {r["unique_id"].split(".")[-1]: r for r in sources.get("results", [])}
     for table in FRESHNESS_TABLES:
@@ -33,7 +37,7 @@ def results_from_sources(sources: dict) -> Iterator[AssetCheckResult]:
                 check_name="freshness",
                 passed=False,
                 severity=AssetCheckSeverity.WARN,
-                metadata={"dbt_status": "missing from sources.json"},
+                metadata={"dbt_status": missing},
             )
             continue
         metadata = {"dbt_status": result["status"]}
@@ -72,4 +76,17 @@ def raw_freshness_check(
     # dbt exits non-zero when a source is past error_after; that is a warning here, not a failure
     invocation = dbt.cli(["source", "freshness", "--select", selection], raise_on_error=False)
     invocation.wait()
-    yield from results_from_sources(invocation.get_artifact("sources.json"))
+    yield from results_from_invocation(invocation)
+
+
+def results_from_invocation(invocation) -> Iterator[AssetCheckResult]:
+    """Read sources.json; if dbt crashed before writing it (e.g. a login error), warn per table.
+
+    The check must never fail the step (spec 001, R5): a crash becomes four WARN results.
+    """
+    try:
+        sources = invocation.get_artifact("sources.json")
+    except FileNotFoundError:
+        yield from results_from_sources({}, missing=DBT_FAILED)
+        return
+    yield from results_from_sources(sources)
