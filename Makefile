@@ -124,7 +124,7 @@ dagster-down: ## Stop the Dagster containers (keeps run history and Postgres run
 dagster-logs: ## Follow the Dagster daemon and webserver logs
 	$(COMPOSE) logs -f --tail 100 dagster-daemon dagster-webserver
 
-preset-zip: dbt-parse ## Build dbt/target/preset_fct_sales_enriched.zip (dataset + metrics) for Preset import; EXPORT=<Preset dataset export ZIP>
+preset-zip: dbt-parse ## Build dbt/target/preset_datasets.zip (sales and headcount datasets + metrics) for Preset import; EXPORT=<Preset dataset export ZIP>
 	@test -n "$(EXPORT)" || { echo "Usage: make preset-zip EXPORT=~/Downloads/dataset_export_....zip"; exit 1; }
 	set -a && . ./.env && set +a && uv run python -m retail_pulse.semantic.preset_export --export "$(EXPORT)"
 

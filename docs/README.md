@@ -29,6 +29,7 @@ seed.py / stream.py ──► PostgreSQL (OLTP, 3NF) ──dlt──► Snowflak
 | 10 | Operations: always-on Dagster in Docker, retries, RAW freshness, Slack alerts | [phases/10-operations.md](phases/10-operations.md), [runbook.md](runbook.md) |
 | 11 | Semantic layer: MetricFlow metrics in dbt, imported into Preset | [phases/11-semantic-layer.md](phases/11-semantic-layer.md) |
 | 12 | dbt environments: per-developer dev schemas, prod only from Dagster, grants in dbt | [phases/12-environments.md](phases/12-environments.md) |
+| 13 | Periodic snapshot: monthly store headcount and revenue per employee | [phases/13-headcount-snapshot.md](phases/13-headcount-snapshot.md) |
 
 New phase docs follow the section order in [phases/_template.md](phases/_template.md).
 
