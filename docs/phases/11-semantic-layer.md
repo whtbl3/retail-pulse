@@ -18,7 +18,7 @@ fct_sales + dim_*  ──dbt──▶  fct_sales_enriched  (same grain, dimensio
              dbt/models/semantic/sales.yml  (semantic model "sales" + 8 metrics, MetricFlow)
                                     │  mf query --explain  →  one SQL expression per metric
                                     ▼
-          make preset-zip  ──▶  dbt/target/preset_fct_sales_enriched.zip  ──import──▶  Preset
+          make preset-zip  ──▶  dbt/target/preset_datasets.zip  ──import──▶  Preset
 ```
 
 | Piece | Does |
@@ -75,8 +75,10 @@ Once, after `MARTS.FCT_SALES_ENRICHED` exists (the 23:00 run, or `make dbt-build
    make preset-zip EXPORT=/mnt/c/Users/<you>/Downloads/<export>.zip
    ```
 
-   It writes `dbt/target/preset_fct_sales_enriched.zip`: your export's `metadata.yaml` and database
-   file unchanged, plus the `FCT_SALES_ENRICHED` dataset with the 8 metrics.
+   It writes `dbt/target/preset_datasets.zip`: your export's `metadata.yaml` and database file
+   unchanged, plus the `FCT_SALES_ENRICHED` dataset with the 8 sales metrics and, since
+   [phase 13](13-headcount-snapshot.md), the `FCT_STORE_HEADCOUNT_MONTHLY` dataset with the headcount
+   metrics.
 3. **Import it:** **Data > Datasets**, the Import icon at the top right, choose the ZIP, confirm. The
    dataset is attached to the existing connection: Superset reuses a database with the same uuid and
    does not change it during a dataset import.

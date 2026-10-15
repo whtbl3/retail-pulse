@@ -335,6 +335,7 @@ for model details.
 | `dim_promotion` | One promotion, plus `-1` "No promotion" | Type 1 |
 | `dim_payment_method` | One payment method | Type 1 |
 | `fct_sales_enriched` | Same as `fct_sales` | `fct_sales` joined to its dimensions on surrogate keys; the model the semantic layer reads |
+| `fct_store_headcount_monthly` | One store per calendar month | Periodic snapshot, rebuilt in full (§10.6) |
 
 Models follow the `stg_`, `int_`, `fct_` and `dim_` naming convention. Surrogate keys are 64-bit integers
 produced by the Snowflake `HASH` function (macro `surrogate_key`); `-1` and `-2` are reserved values.
@@ -422,6 +423,30 @@ dbt has three targets (spec `specs/003-dbt-environments/`):
 - A pull request's schemas stay after its CI run and are dropped when it is merged or closed
   (`ci-cleanup.yml`). `make dbt-dev-clean` drops a developer's own schemas; both refuse production.
 
+### 10.6 Store Headcount Snapshot
+
+`fct_store_headcount_monthly` (spec `specs/004-store-headcount-snapshot/`) is a periodic snapshot fact:
+one row per store per calendar month from January 2020 (`date_start`) to the current local month,
+including store-months with no staff or no sales. It is rebuilt in full on every run from
+`int_employee_scd2` and `fct_sales`; RAW and the generators are unchanged.
+
+- Headcount is read from `int_employee_daily_store`, one row per employee per local day with the state
+  at the **end** of that day. Employed: `start_date <= day` and `end_date` null or after the day, so the
+  last working day (`end_date`) is the day the employee leaves. Store: the employee history version valid
+  at the instant the day ends (local midnight); before the first recorded transfer the first version
+  applies.
+- `opening_headcount` is the count at the end of the day before the month, `closing_headcount` at the end
+  of the month's last day (of `as_of_date` for the current month). `joiners`, `leavers`, `transfers_in`
+  and `transfers_out` are day-to-day changes in the month, so
+  `closing = opening + joiners + transfers_in - leavers - transfers_out` for every row.
+- `net_revenue` is the net amount of completed sales by store and local month, equal to `fct_sales`.
+- `is_month_closed` is false only for the current month; `as_of_date` is the day the values are as of.
+- **Headcount is semi-additive**: it may be summed across stores, never across months. Over several months
+  the correct figure is the closing headcount of the last month (the `closing_headcount` metric).
+- Revenue per employee is the semantic-layer metric `revenue_per_employee`, `SUM(net_revenue) /
+  SUM(average_headcount)` with `average_headcount = (opening + closing) / 2`, empty when there were no
+  staff. Over several months the denominator is employee-months, so it reads "per employee per month".
+
 ## 11. Orchestration Specification
 
 Dagster is introduced after ingestion and dbt models work independently. It represents dlt and dbt work
@@ -478,9 +503,14 @@ all labels in English. Data is as fresh as the last daily `full_pipeline` run.
 Semantic layer (spec `specs/002-semantic-layer/`): every business metric (`net_revenue`, `gross_revenue`,
 `discount_amount`, `gross_profit`, `quantity_sold`, `transaction_count`, `gross_margin`,
 `average_basket_value`) is defined once with MetricFlow in `dbt/models/semantic/sales.yml`, on
-`fct_sales_enriched`, and validated in CI. The Preset API is Enterprise only, so `make preset-zip` builds a
+`fct_sales_enriched`, and validated in CI. The store headcount metrics (`closing_headcount`,
+`opening_headcount`, `employee_months`, `store_net_revenue`, `joiners`, `leavers`, `revenue_per_employee`)
+are in `dbt/models/semantic/headcount.yml`, on `fct_store_headcount_monthly` (spec 004). The Preset API is Enterprise only, so `make preset-zip` builds a
 dataset import ZIP that the owner imports in Preset (Data > Datasets > Import); it reuses the existing
-`PRESET_READER` connection. Charts use those saved metrics, never hand-written aggregates. A metric is
+`PRESET_READER` connection, with one dataset per semantic model. A semi-additive metric reaches Preset as
+its plain `SUM` with a warning text ("always group by month"), because one Preset expression cannot keep
+only the last month. The chart "Revenue per employee by store and month" uses the headcount dataset.
+Charts use those saved metrics, never hand-written aggregates. A metric is
 changed in dbt, never in Preset.
 
 ## 13. Quality Attributes
@@ -544,6 +574,7 @@ dbt tests are required for transformed models. Great Expectations validates the 
 | 10 | Operations: always-on Dagster in Docker, ingestion retry, RAW freshness, Slack failure alerts, runbook |
 | 11 | Semantic layer: MetricFlow metrics in dbt, imported into Preset |
 | 12 | dbt environments: per-developer dev schemas, prod only from Dagster, grants in dbt, PR schemas kept until close |
+| 13 | Store headcount periodic snapshot: monthly headcount, movements, revenue per employee |
 
 ## 15. Repository Contracts
 
@@ -634,6 +665,11 @@ resulting analytics in Preset.
 | A development build builds only changed models and reads the rest from production | Final | Cheapest option that still runs on real data; same mechanism as slim CI (spec 003) |
 | Read grants on the marts are declared in the dbt project and applied on every prod build; the manual future grant stays as a safety net | Final | Grants made by hand are lost when objects or databases are recreated (spec 003) |
 | CI schemas live for the life of the pull request | Final | Reviewers can inspect what a PR built; cleanup still happens on merge or close (spec 003) |
+| The headcount snapshot is built from the employee history and the sales fact in the warehouse, not from new source data | Final | History already exists (SCD2 on store assignment); no RAW or generator change needed (spec 004) |
+| An employee is counted at the store of the history version valid when the local day ends; before the first recorded change, the first known store applies | Final | That is how the existing employee history works; transfers are only recorded since the change simulator started (spec 004) |
+| An employee whose last working day is the month's last day leaves in that month and is not in its closing headcount | Final | Keeps closing = opening + movements exact (spec 004) |
+| Headcount is semi-additive; revenue per employee is a ratio of sums over average headcount | Final | Follows "ratio metrics are ratios of sums"; summing headcount over months counts people several times (spec 004) |
+| Semi-additive metrics reach Preset as a plain sum with a warning text | Final | A Preset metric is one expression and cannot keep only the last month; the semantic layer gives the exact figure (spec 004) |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.
