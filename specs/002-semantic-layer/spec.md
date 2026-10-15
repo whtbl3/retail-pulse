@@ -1,6 +1,6 @@
 # 002: Semantic layer for metrics
 
-- Status: Draft
+- Status: Approved (approved 2026-10-15, PhucLH)
 - Intent: none (roadmap step 6, requested by the project owner)
 - Project-Spec sections affected: §4, §5, §10.3, §12, §14, §15, §17
 
@@ -23,6 +23,9 @@ number in every chart and to every team.
 In scope:
 
 - Defining the sales metrics and the dimensions they can be sliced by, as code in the dbt project.
+- One mart model at the grain of `fct_sales` that adds the dimension attributes the charts slice by. It
+  replaces the SQL of the Preset virtual dataset `sales_enriched` and adds no new business data
+  (added during planning, see plan.md).
 - Validating those definitions in CI.
 - Making the defined metrics available in Preset and rebuilding the existing dashboard on them.
 - Documenting how to add a metric.
