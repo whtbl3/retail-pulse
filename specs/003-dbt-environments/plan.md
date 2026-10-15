@@ -46,9 +46,9 @@ Great Expectations are not touched.
    reachable. No Snowflake change is needed.
 
 6. **Dagster builds prod (R3, AC2).** `DbtProject(..., target="prod")` so the manifest Dagster loads is
-   the production one, and `DbtCliResource(project_dir=dbt_project, target="prod")` in
-   `definitions.py` so every Dagster `dbt build` runs against prod. Both parameters exist in the
-   installed dagster-dbt (`DbtProject.target`, `DbtCliResource.target`). The Docker image mounts
+   the production one. The `DbtCliResource(project_dir=dbt_project)` in `definitions.py` inherits that
+   target (dagster-dbt `DbtCliResource.__init__` takes `project_dir.target` when none is given), so
+   every Dagster `dbt build` runs against prod. The Docker image mounts
    `~/.dbt`, so the owner's profile needs the `prod` output (see Risks).
 
 7. **PR schemas live until the PR closes (R7, AC6).** `drop_ci_schemas` becomes
@@ -76,11 +76,13 @@ Great Expectations are not touched.
 | `.env.example` | `DBT_DEV_SCHEMA` |
 | `src/retail_pulse/setup_local.py` | Write `DBT_DEV_SCHEMA`; note a profile without `prod` |
 | `Makefile` | `dbt-prod-state`, slim dev `dbt-build` (+ `SELECT=`), `dbt-build-prod`, `dbt-full-refresh --target prod`, `dbt-dev-clean`; `dbt-test` in dev |
-| `.gitignore` | `dbt/target/` already ignored; check the worktree path is covered |
-| `src/retail_pulse/orchestration/dbt_assets.py`, `definitions.py` | `target="prod"` |
+| `dbt/ci/profiles.yml` | prod output default schema `PUBLIC` (was `DBT_DEV`), same as the example |
+| `src/retail_pulse/orchestration/dbt_assets.py` | `DbtProject(target="prod")`; `DbtCliResource` inherits it (`definitions.py` comment only) |
 | `.github/workflows/ci.yml` | Drop PR schemas before the build, not after |
 | `.github/workflows/ci-cleanup.yml` | New: drop `PR_<n>_*` on PR close or merge |
 | `tests/test_dbt_environments.py` | New: offline parse checks (see Test strategy) |
+| `tests/test_dbt_commands.py` | New: which target each make command and workflow uses (`make -n`, workflow YAML) |
+| `docs/phases/11-semantic-layer.md`, `docs/runbook.md` | Commands that now name the dev or prod build |
 | `tests/test_setup_local.py`, `tests/test_orchestration.py` | `DBT_DEV_SCHEMA`; Dagster uses prod |
 
 ## Risks and rollback

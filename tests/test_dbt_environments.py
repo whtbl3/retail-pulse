@@ -103,6 +103,13 @@ def test_dev_writes_only_to_the_developer_schemas(dev):
         assert node["schema"].upper() == f"DBT_TEST_{layer(node).upper()}", node["name"]
 
 
+def test_two_developers_get_separate_schemas(tmp, dev):
+    other = parse(tmp, dev_profiles(tmp), "dev", {**ENV, "DBT_DEV_SCHEMA": "DBT_OTHER"})
+    mine = {n["schema"].upper() for n in models(dev)}
+    theirs = {n["schema"].upper() for n in models(other)}
+    assert mine.isdisjoint(theirs)
+
+
 def test_the_default_target_is_dev(tmp):
     manifest = parse(tmp, dev_profiles(tmp))
     assert {n["schema"].upper() for n in models(manifest)} == {
@@ -122,7 +129,7 @@ def test_ci_writes_to_the_pull_request_schemas(ci):
         assert node["schema"].upper() == f"PR_7_{layer(node).upper()}", node["name"]
 
 
-@pytest.mark.parametrize("schema", ["MARTS", "staging", "RAW"])
+@pytest.mark.parametrize("schema", ["MARTS", "staging", "RAW", "PUBLIC"])
 def test_dev_refuses_a_production_schema(tmp, schema):
     result = run_dbt(
         ["parse", "--target-path", str(tmp / "refused")],
