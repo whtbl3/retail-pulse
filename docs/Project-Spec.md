@@ -447,6 +447,28 @@ including store-months with no staff or no sales. It is rebuilt in full on every
   SUM(average_headcount)` with `average_headcount = (opening + closing) / 2`, empty when there were no
   staff. Over several months the denominator is employee-months, so it reads "per employee per month".
 
+### 10.7 Mart Contracts
+
+Every table in `MARTS` (7 dimensions and 3 facts) has an enforced dbt contract (spec
+`specs/005-mart-contracts/`): each column is declared in `dbt/models/marts/___models.yml` with its name and
+`data_type`. Preset and the semantic layer read the marts by column name and type, so their shape is part of
+the public interface.
+
+- Before it creates a mart, dbt compares the columns the SQL returns with the declared ones and stops with a
+  table of differences (missing, extra or retyped column). CI (`dbt-slim-ci`) builds every changed mart, so
+  a break is found in the pull request, not on the dashboard.
+- dbt compares base types only (`NUMBER`, `VARCHAR`, `DATE`, ...); precision and length are not compared.
+- Columns tested `not_null` also carry a `not_null` constraint, which Snowflake enforces on write. Snowflake
+  records `unique`, `primary_key` and `foreign_key` constraints but does not enforce them, so uniqueness and
+  relationships stay dbt tests.
+- `fct_sales` is incremental and uses `on_schema_change='fail'`, which dbt requires with a contract: a normal
+  run merges as before; a change of shape stops the run instead of altering the table.
+- A pytest (`tests/test_dbt_environments.py`) fails when a model under `models/marts` has no enforced
+  contract or a column without a `data_type`.
+- Changing a mart's shape on purpose: change the SQL and the YAML columns in the same pull request. For
+  `fct_sales`, run the `fct_sales_full_refresh` job after the merge so the table is recreated with the new
+  column.
+
 ## 11. Orchestration Specification
 
 Dagster is introduced after ingestion and dbt models work independently. It represents dlt and dbt work
@@ -539,8 +561,9 @@ At minimum, tests should cover:
 - source relationship integrity;
 - non-negative monetary measures;
 - transaction-item grain in `fct_sales`;
-- valid and non-overlapping SCD2 intervals per business key; and
-- fact-to-dimension referential integrity.
+- valid and non-overlapping SCD2 intervals per business key;
+- fact-to-dimension referential integrity; and
+- the column names and types of every mart, through enforced dbt contracts (§10.7).
 
 dbt tests are required for transformed models. Great Expectations validates the incremental RAW tables before dbt runs (phase 8).
 
@@ -670,6 +693,8 @@ resulting analytics in Preset.
 | An employee whose last working day is the month's last day leaves in that month and is not in its closing headcount | Final | Keeps closing = opening + movements exact (spec 004) |
 | Headcount is semi-additive; revenue per employee is a ratio of sums over average headcount | Final | Follows "ratio metrics are ratios of sums"; summing headcount over months counts people several times (spec 004) |
 | Semi-additive metrics reach Preset as a plain sum with a warning text | Final | A Preset metric is one expression and cannot keep only the last month; the semantic layer gives the exact figure (spec 004) |
+| Mart shapes (column names and types) are enforced by dbt contracts on every build | Final | Preset and the semantic layer depend on them; CI should catch a break, not a dashboard reader (spec 005) |
+| Uniqueness and relationships stay dbt tests; only not-null is a warehouse constraint | Final | Snowflake enforces `NOT NULL` only; other constraints are recorded but not checked (spec 005) |
 
 Any change to a final decision must be explicit and should update this log, the affected acceptance
 criteria, and the implementation documentation in the same change.
