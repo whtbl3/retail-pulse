@@ -182,8 +182,37 @@ def remove_root(name: str) -> str:
     return str(PurePosixPath(*PurePosixPath(name).parts[1:]))
 
 
+# Settings of the exported dataset that describe that dataset only, not the connection
+NOT_COPIED = (
+    "sql",
+    "params",
+    "template_params",
+    "extra",
+    "folders",
+    "default_endpoint",
+    "currency_code_column",
+    "fetch_values_predicate",
+    "external_url",
+    "source_db_engine",
+    "data_file",
+)
+# Boolean fields that Superset's ImportV1DatasetSchema refuses as null
+REQUIRED_BOOLEANS = ("normalize_columns", "always_filter_main_dttm")
+
+
 def build_dataset(template: dict, database: dict, metrics: list[dict], columns: list[dict]) -> dict:
-    dataset = {key: None for key in template}  # same keys as the owner's Preset version exports
+    """The fct_sales_enriched dataset, shaped like the owner's export.
+
+    It keeps the export's keys and general settings (cache timeout, catalog...), so it matches the
+    owner's Preset version; Superset rejects null in fields such as normalize_columns.
+    """
+    dataset = dict(template)
+    for key in NOT_COPIED:
+        if key in dataset:
+            dataset[key] = None
+    for key in REQUIRED_BOOLEANS:
+        if key in dataset and dataset[key] is None:
+            dataset[key] = False
     dataset.update(
         {
             "table_name": MODEL.upper(),
