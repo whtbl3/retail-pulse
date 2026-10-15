@@ -127,6 +127,19 @@ def test_table_missing_from_sources_json_is_reported_as_warning():
     assert all(r.severity == AssetCheckSeverity.WARN for r in missing)
 
 
+def test_dbt_crash_before_sources_json_warns_instead_of_failing():
+    class _CrashedInvocation:
+        def get_artifact(self, name):
+            raise FileNotFoundError(f"target/abc/{name}")
+
+    results = list(freshness.results_from_invocation(_CrashedInvocation()))
+    assert len(results) == len(freshness.FRESHNESS_TABLES)
+    for r in results:
+        assert not r.passed
+        assert r.severity == AssetCheckSeverity.WARN
+        assert r.metadata["dbt_status"].value == freshness.DBT_FAILED
+
+
 def test_dbt_sources_define_freshness_on_updated_at():
     import yaml
 
