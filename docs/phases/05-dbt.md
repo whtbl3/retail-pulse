@@ -80,9 +80,9 @@ exactly `STAGING`, `INTERMEDIATE`, `MARTS`. Your own builds (`dev`) and CI keep 
 | intermediate | table | `int_product_scd2` runs window functions over the full history and `fct_sales` joins to it; computed once at build time, not on every query |
 | marts | table (`fct_sales` is incremental) | Tables for the dashboard |
 
-> **Limitation:** because the macro drops the `target.schema` join, if a `prod` target is added on the same
-> `RETAIL_PULSE` database, dev and prod will write to the same `STAGING`, `INTERMEDIATE`, `MARTS`. There is only dev now,
-> so nothing is affected yet. When adding prod, make the macro branch on `target.name` or use a separate database.
+> **Dev and prod:** the macro drops the `target.schema` join only for the `prod` target. A developer's `dev` build writes
+> to `DBT_<NAME>_STAGING`, `_INTERMEDIATE`, `_MARTS`, so it never overwrites what Preset reads
+> ([phase 12](12-environments.md)).
 
 > **Watch config spelling:** dbt does not raise an error when a `+` key is misspelled (for example `+materialize`
 > instead of `+materialized`); the model silently falls back to the default (view). Check the object type actually created.
