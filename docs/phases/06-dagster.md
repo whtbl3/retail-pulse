@@ -1,9 +1,14 @@
 # Phase 6: Dagster (orchestrating dlt, dbt and quality checks)
 
+## Why it is needed
+
 After phase 5, the whole chain still runs by hand: `make ingest`, then `make dbt-build`, in the right order, every day.
 Dagster puts it into one graph: it knows what runs first, runs on a schedule, stops at the right place on failure, and
 shows the status and lineage of each table. Scope follows [Project-Spec, section 11](../Project-Spec.md#11-orchestration-specification).
 Not done yet: automatic retries, alerts, sensors and deployment to a server.
+
+Without it, a forgotten `make ingest` or a dbt run started before the load finished leaves the dashboard stale or
+built on half-loaded data, and nobody notices.
 
 ## Concepts
 
@@ -16,6 +21,7 @@ Not done yet: automatic retries, alerts, sensors and deployment to a server.
 | **Definitions** (`defs`) | The list of every asset, job and schedule Dagster knows about | `definitions.py` |
 | **Code location** | The code package Dagster loads | module `retail_pulse.orchestration.definitions`, declared in `pyproject.toml` (`[tool.dagster]`) |
 | **Daemon** | Background process that triggers schedules | started by `make dagster` |
+| **Materialize** | Run an asset's code so the data it describes is produced or refreshed. Not the same as a dbt materialization (view, table) | **Materialize selected** in the UI, or a job run |
 
 Further reading: [Assets](https://docs.dagster.io/guides/build/assets), [Jobs](https://docs.dagster.io/guides/build/jobs),
 [Schedules](https://docs.dagster.io/guides/automate/schedules).

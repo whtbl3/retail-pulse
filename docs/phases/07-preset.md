@@ -1,10 +1,29 @@
 # Phase 7: Preset (dashboard)
 
+## Why it is needed
+
 The pipeline runs, but nobody sees the results yet. Preset is the last layer: it reads the mart tables in Snowflake and
 turns them into a dashboard. The rule from [Project-Spec, section 12](../Project-Spec.md#12-bi-specification): Preset
 **reads only the dbt marts**, never PostgreSQL or RAW.
 
+The business questions in the spec (revenue trends, categories, stores, promotions, gross margin) are answered here.
+Reading only the marts means every chart uses the same cleaned, tested numbers and the SCD2 cost at the time of sale;
+a chart built on RAW would count returns and copies. A read-only role keeps an external tool from changing any data.
+
 Five steps: a read-only role, a Preset account, the Snowflake connection, the dataset, charts and dashboard.
+
+## Concepts
+
+| Term | Meaning here |
+|---|---|
+| BI tool | The software business users read numbers in. Preset is a managed Apache Superset service, used on the free tier |
+| Database connection | Preset's saved login to Snowflake: user `PRESET_READER`, role `REPORTER`, warehouse `RETAIL_WH`, schema `MARTS` |
+| Least privilege | Give a user only what it needs. `REPORTER` can `SELECT` on `MARTS` and nothing in RAW |
+| Future grant | `GRANT ... ON FUTURE TABLES`: also applies to tables created later, such as a table dbt rebuilds |
+| Dataset | What a chart reads: a table, or a saved SQL query (virtual dataset) such as `sales_enriched` |
+| Metric | An aggregate expression a chart shows, such as `SUM(NET_AMOUNT)`. Since phase 11 the metrics come from dbt |
+| Dashboard and filter | A page of charts (`RetailPulse Sales Overview`) with filters that apply to all of them (store, time range) |
+| Reconciliation | Checking that dashboard totals match the totals queried in Snowflake, so joins neither drop nor duplicate rows |
 
 ## Step 1: A read-only role for Preset
 
