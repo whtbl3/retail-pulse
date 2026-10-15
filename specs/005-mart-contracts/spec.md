@@ -21,7 +21,7 @@ to the declared shape, reviewed in the same PR.
 
 In scope:
 
-- The tables in `MARTS` (Q1 decides whether all of them or only those Preset reads).
+- All 10 tables in `MARTS`, dimensions and facts (Q1).
 - A declared name and type for every column of those tables, checked on every build.
 - Not-null rules that the warehouse can enforce, where the column is already tested as not null.
 - A check that a new mart cannot be added without a declared shape.
@@ -77,10 +77,12 @@ becomes declared and enforced.
 | Mart shapes (column names and types) are enforced on every build | Proposed | Preset and the semantic layer depend on them; CI should catch a break, not a dashboard reader |
 | Uniqueness and relationships stay dbt tests | Proposed | The warehouse does not enforce them; only not-null is enforced |
 
+## Answers to open questions
+
+Answered by the owner on 2026-10-15 (decision card in the project thread).
+
+- **Q1, which marts:** all 10 marts, dimensions and facts.
+
 ## Open questions
 
-- **Q1** [NEEDS CLARIFICATION] Which marts get a contract?
-  1. All 10 marts (dimensions and facts). **Recommended:** one rule for the whole layer, and the
-     dimensions feed every chart through the facts' keys.
-  2. Only the two Preset reads directly (`fct_sales_enriched`, `fct_store_headcount_monthly`).
-  3. Others: let's discuss.
+None.
