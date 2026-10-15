@@ -8,7 +8,7 @@ DLT_PIPELINE ?= retail_oltp_to_snowflake
 # dbt runs from dbt/ and loads .env first because profiles.yml uses env_var(); dbt comes from .venv (via uv run)
 DBT := set -a && . ./.env && set +a && cd dbt && uv run dbt
 
-.PHONY: help install setup up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster dagster-up dagster-down dagster-logs clean
+.PHONY: help install setup up down ingest snowflake-init snowflake-init-dry db-reset psql seed reseed clean-raw stream stream-sales stream-loop test lint check dbt-deps dbt-parse dbt-build dbt-test dbt-full-refresh dbt-docs quality dagster dagster-up dagster-down dagster-logs preset-zip clean
 
 help: ## List the commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -103,6 +103,10 @@ dagster-down: ## Stop the Dagster containers (keeps run history and Postgres run
 
 dagster-logs: ## Follow the Dagster daemon and webserver logs
 	$(COMPOSE) logs -f --tail 100 dagster-daemon dagster-webserver
+
+preset-zip: dbt-parse ## Build dbt/target/preset_fct_sales_enriched.zip (dataset + metrics) for Preset import; EXPORT=<Preset dataset export ZIP>
+	@test -n "$(EXPORT)" || { echo "Usage: make preset-zip EXPORT=~/Downloads/dataset_export_....zip"; exit 1; }
+	set -a && . ./.env && set +a && uv run python -m retail_pulse.semantic.preset_export --export "$(EXPORT)"
 
 clean: ## Delete generated files (caches, dbt/target, dbt/logs); keeps .env, .venv, keys, dbt_packages
 	rm -rf .pytest_cache .ruff_cache logs dbt/target dbt/logs dbt/package-lock.concurrent-update-lock

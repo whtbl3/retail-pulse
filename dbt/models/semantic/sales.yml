@@ -1,0 +1,100 @@
+# Semantic layer (spec 002): every business metric is defined here, once.
+# `make preset-zip` builds a Preset import ZIP that adds them as saved metrics to fct_sales_enriched.
+# All metrics read one model, fct_sales_enriched, because the sync cannot convert metrics that need joins.
+# fct_sales holds completed transactions only, so no metric filters on status.
+
+semantic_models:
+  - name: sales
+    description: Completed sales line items with the attributes the dashboard slices by.
+    model: ref('fct_sales_enriched')
+    defaults:
+      agg_time_dimension: full_date
+    entities:
+      - name: sale_line
+        type: primary
+        expr: "transaction_id || '-' || line_number"
+    dimensions:
+      - name: full_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: store_name
+        type: categorical
+      - name: product_name
+        type: categorical
+      - name: category_name
+        type: categorical
+      - name: brand_name
+        type: categorical
+      - name: promotion_label
+        type: categorical
+      - name: payment_method_name
+        type: categorical
+    measures:
+      - name: net_amount
+        agg: sum
+      - name: gross_amount
+        agg: sum
+      - name: discount_amount
+        agg: sum
+      - name: gross_profit
+        agg: sum
+      - name: quantity
+        agg: sum
+      - name: transactions
+        agg: count_distinct
+        expr: transaction_id
+
+metrics:
+  - name: net_revenue
+    label: Net revenue
+    description: Revenue after promotion discounts and coupons, SUM(net_amount). The main revenue figure.
+    type: simple
+    type_params:
+      measure: net_amount
+  - name: gross_revenue
+    label: Gross revenue
+    description: Revenue at regular price before any discount, SUM(quantity × regular_price).
+    type: simple
+    type_params:
+      measure: gross_amount
+  - name: discount_amount
+    label: Promotion discount
+    description: Total promotion discount given. Coupons are not included.
+    type: simple
+    type_params:
+      measure: discount_amount
+  - name: gross_profit
+    label: Gross profit
+    description: Net revenue minus cost, using the product cost valid at the time of sale.
+    type: simple
+    type_params:
+      measure: gross_profit
+  - name: quantity_sold
+    label: Quantity sold
+    description: Units sold.
+    type: simple
+    type_params:
+      measure: quantity
+  - name: transaction_count
+    label: Transactions
+    description: Number of distinct completed invoices.
+    type: simple
+    type_params:
+      measure: transactions
+  - name: gross_margin
+    label: Gross margin
+    description: Gross profit as a share of net revenue, SUM(gross_profit) / SUM(net_amount). A ratio of sums, so large sales weigh more than small ones.
+    type: ratio
+    type_params:
+      numerator: gross_profit
+      denominator: net_revenue
+  - name: average_basket_value
+    label: Average basket value
+    description: Net revenue per invoice, net_revenue / transaction_count.
+    type: derived
+    type_params:
+      expr: net_revenue / nullif(transaction_count, 0)
+      metrics:
+        - net_revenue
+        - transaction_count
