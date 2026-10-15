@@ -210,10 +210,9 @@ def test_a_dev_build_selects_only_the_changed_model_and_its_dependents(tmp, prod
     assert selected() == {"stg_store", *downstream}
 
 
-
 # --- Cleanup (R7, R9) ---
-# `dbt run-operation` opens a Snowflake connection before running a macro, so the drop macro is rendered
-# here with Jinja and stand-ins for dbt's target, run_query and exceptions.
+# `dbt run-operation` opens a Snowflake connection before running a macro, so the drop macro is
+# rendered here with Jinja and stand-ins for dbt's target, run_query and exceptions.
 
 
 class Refused(Exception):
@@ -250,7 +249,8 @@ def test_dropping_schemas_drops_only_the_target_schemas():
 
 
 @pytest.mark.parametrize(
-    ("target_name", "schema"), [("prod", "PUBLIC"), ("prod", "DBT_X"), ("dev", "MARTS"), ("dev", "raw")]
+    ("target_name", "schema"),
+    [("prod", "PUBLIC"), ("prod", "DBT_X"), ("dev", "MARTS"), ("dev", "raw")],
 )
 def test_dropping_schemas_refuses_production(target_name, schema):
     with pytest.raises(Refused, match="refuses to drop production"):

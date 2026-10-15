@@ -109,3 +109,37 @@ def test_snowflake_init_gets_the_admin_password_in_memory_only(repo, monkeypatch
     assert seen["SNOWFLAKE_ADMIN_USER"] == "ADMIN"
     assert seen["SNOWFLAKE_ADMIN_PASSWORD"] == "s3cret"
     assert "s3cret" not in (repo / ".env").read_text()
+
+
+@pytest.mark.parametrize(
+    ("user", "schema"),
+    [("phuclh", "DBT_PHUCLH"), ("phuc.lh", "DBT_PHUC_LH"), ("Anna-B", "DBT_ANNA_B")],
+)
+def test_dev_schema_is_named_after_the_user(user, schema):
+    assert setup_local.dev_schema_name(user) == schema
+
+
+def test_setup_names_the_dev_schema_and_keeps_an_existing_one(repo, monkeypatch):
+    monkeypatch.setattr(setup_local.getpass, "getuser", lambda: "phuclh")
+    setup_local.main(["--skip-snowflake"], ask=lambda _: "ORG-ACC")
+    env_path = repo / ".env"
+    assert setup_local.read_env(env_path.read_text())["DBT_DEV_SCHEMA"] == "DBT_PHUCLH"
+
+    env_path.write_text(setup_local.set_env(env_path.read_text(), "DBT_DEV_SCHEMA", "DBT_MINE"))
+    setup_local.main(["--skip-snowflake"], ask=lambda _: "ORG-ACC")
+    assert setup_local.read_env(env_path.read_text())["DBT_DEV_SCHEMA"] == "DBT_MINE"
+
+
+def test_setup_points_out_a_profile_without_the_prod_target(repo, capsys):
+    old_profile = (
+        "retail_pulse:\n  target: dev\n  outputs:\n    dev:\n      type: snowflake\n"
+        "      schema: DBT_DEV\n"
+    )
+    (repo / "home" / ".dbt").mkdir(parents=True)
+    (repo / "home" / ".dbt" / "profiles.yml").write_text(old_profile)
+
+    setup_local.main(["--skip-snowflake"], ask=lambda _: "ORG-ACC")
+
+    out = capsys.readouterr().out
+    assert "prod" in out and "DBT_DEV_SCHEMA" in out
+    assert (repo / "home" / ".dbt" / "profiles.yml").read_text() == old_profile

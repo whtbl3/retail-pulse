@@ -23,6 +23,6 @@ defs = Definitions(
     sensors=[slack_on_run_failure],
     resources={
         "dlt_res": DagsterDltResource(),
-        "dbt": DbtCliResource(project_dir=dbt_project),  # profiles_dir comes from dbt_project
+        "dbt": DbtCliResource(project_dir=dbt_project),  # profiles_dir, target from dbt_project
     },
 )

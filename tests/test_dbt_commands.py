@@ -48,7 +48,7 @@ def test_only_the_explicit_commands_build_prod():
     assert "--target prod" in build
     [refresh] = dbt_lines(recipe("dbt-full-refresh"), "build")
     assert "--target prod" in refresh and "--full-refresh" in refresh
-    # dbt-test parses production first (dbt-prod-state) to know what changed; it builds nothing there
+    # dbt-test first parses production (dbt-prod-state) to see what changed; it builds nothing there
     for target in ("dbt-parse", "dbt-test", "dbt-docs", "dbt-dev-clean"):
         lines = [line for line in recipe(target) if "prod-state" not in line]
         assert not any("--target prod" in line for line in lines), target
