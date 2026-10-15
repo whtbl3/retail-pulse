@@ -18,5 +18,53 @@ services:
       interval: 3s
       retries: 10
 
+  # Always-on Dagster (spec 001): `make dagster-up`. Both services run the same image and code.
+  # Secrets are mounted read-only. .snowflake/ is mounted at its host path, so the absolute key paths
+  # in .env and .dlt/secrets.toml work unchanged; REPO_DIR is set by the Makefile.
+  dagster-webserver: &dagster
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: retail-pulse-dagster
+    container_name: retail-pulse-dagster-webserver
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "/opt/dagster/home/workspace.yaml"]
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      DAGSTER_HOME: /opt/dagster/home
+      DBT_PROFILES_DIR: /run/dbt-profiles
+    volumes:
+      - dagster_storage:/opt/dagster/storage
+      - ../.dlt:/app/.dlt:ro
+      - ../.snowflake:${REPO_DIR:?run docker compose through make}/.snowflake:ro
+      - ${DBT_PROFILES_DIR:-${HOME}/.dbt}:/run/dbt-profiles:ro
+    ports: ["3000:3000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/server_info')"]
+      interval: 10s
+      retries: 12
+
+  # Runs the 23:00 schedule, the failure sensor and every queued run
+  dagster-daemon:
+    <<: *dagster
+    container_name: retail-pulse-dagster-daemon
+    command: ["dagster-daemon", "run", "-w", "/opt/dagster/home/workspace.yaml"]
+    ports: []
+    healthcheck:
+      disable: true
+    volumes:
+      - dagster_storage:/opt/dagster/storage
+      - dlt_state:/root/.dlt
+      - ../.dlt:/app/.dlt:ro
+      - ../.snowflake:${REPO_DIR:?run docker compose through make}/.snowflake:ro
+      - ${DBT_PROFILES_DIR:-${HOME}/.dbt}:/run/dbt-profiles:ro
+
 volumes:
   pgdata:
+  dagster_storage:
+  dlt_state:

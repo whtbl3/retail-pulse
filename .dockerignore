@@ -1,0 +1,24 @@
+# Secrets: mounted read-only at run time, never baked into the image (spec 001, R9)
+.env
+.env.*
+.dlt
+.snowflake
+*.p8
+*.pem
+**/profiles.yml
+!dbt/ci/profiles.yml
+
+# Local state and generated files
+.git
+.venv
+.dagster_home
+.tmp_dagster_home_*
+.claude
+.pytest_cache
+.ruff_cache
+**/__pycache__
+logs
+dbt/target
+dbt/logs
+dbt/dbt_packages
+assets

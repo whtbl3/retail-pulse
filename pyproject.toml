@@ -11,6 +11,7 @@ dependencies = [
     "dagster>=1.13.25",
     "dagster-dbt>=0.29.25",
     "dagster-dlt>=0.29.25",
+    "dagster-postgres>=0.29.25",
     "dbt-core>=1.12.5",
     "dbt-snowflake>=1.12.1",
     "dlt[snowflake]>=1.30.0",
