@@ -1,0 +1,5 @@
+load_from:
+  - python_module:
+      module_name: retail_pulse.orchestration.definitions
+      location_name: retail_pulse
+      working_directory: /app
