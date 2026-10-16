@@ -18,7 +18,8 @@
 ## Review
 
 - [ ] Self-reviewed against `REVIEW.md`
-- [ ] Feature PR only: `spec-reviewer` report pasted below, no criterion left Missing
+- [ ] Feature PR only: spec check pasted below (each requirement and acceptance criterion Met, Partly or
+      Missing), no criterion left Missing
 
 ## How it was tested
 

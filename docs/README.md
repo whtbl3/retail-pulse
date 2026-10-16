@@ -45,9 +45,9 @@ New phase docs follow the section order in [phases/_template.md](phases/_templat
 
 | Topic | Document |
 |---|---|
-| Claude Code: `CLAUDE.md`, permissions and hooks in `.claude/` | [claude-code.md](claude-code.md) |
-| Code review: `REVIEW.md`, `spec-reviewer` subagent | [code-review.md](code-review.md) |
-| Spec-driven development: Intent issue, `specs/`, `/new-feature` skill, trying Spec Kit | [spec-driven-development.md](spec-driven-development.md), [specs/README.md](../specs/README.md) |
+| dbt conventions: layers, keys, SCD2, incremental facts | [dbt-conventions.md](dbt-conventions.md) |
+| Code review: `REVIEW.md`, spec check | [code-review.md](code-review.md) |
+| Spec-driven development: Intent issue, `specs/`, trying Spec Kit | [spec-driven-development.md](spec-driven-development.md), [specs/README.md](../specs/README.md) |
 
 ## Quick start
 

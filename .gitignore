@@ -6,9 +6,9 @@ dist/
 wheels/
 *.egg-info
 
-# claude: ignore only per-machine settings; the shared CLAUDE.md and .claude/ are committed
-.claude/settings.local.json
-.claude/worktrees/
+# Local assistant settings, kept out of the repo
+.claude/
+CLAUDE.md
 CLAUDE.local.md
 
 # Virtual environments

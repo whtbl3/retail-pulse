@@ -606,9 +606,8 @@ Existing implementation locations:
 - `docs/phases/`: per-phase run and verification guides;
 - `docs/runbook.md`: recovery steps for each pipeline failure type;
 - `docs/design/`: component design and implementation notes;
-- `CLAUDE.md` and `.claude/` (settings, hooks, rules, skills, agents): Claude Code instructions and guardrails,
-  explained in `docs/claude-code.md`;
-- `REVIEW.md`: review severity and checks for people and Claude, explained in `docs/code-review.md`;
+- `REVIEW.md`: review severity and checks, explained in `docs/code-review.md`;
+- `docs/dbt-conventions.md`: conventions every dbt change follows;
 - `specs/`: one folder per feature (`spec.md`, `plan.md`, `tasks.md`) from `specs/_template/`, explained in
   `docs/spec-driven-development.md`;
 - `Makefile`: local developer commands; and
@@ -653,7 +652,7 @@ resulting analytics in Preset.
 | Great Expectations checks on RAW block dbt | Final | dbt tests run after models are built; bad RAW data should stop the run earlier |
 | Dashboard labels in English only | Final | Source data is English; mixing languages confuses readers |
 | Every change reaches `main` through a pull request; CI runs dbt on a separate database | Final | CI must not touch real data and must gate merges |
-| PRs are reviewed by `REVIEW.md`; feature PRs carry a `spec-reviewer` report; findings never approve or block, a person approves | Final | Review effort goes to intent and risk, while rules that protect RAW and SCD2 history are checked on every PR |
+| PRs are reviewed by `REVIEW.md`; feature PRs carry a spec check report; findings never approve or block, a person approves | Final | Review effort goes to intent and risk, while rules that protect RAW and SCD2 history are checked on every PR |
 | New features start from a spec in `specs/NNN-*/` approved before code; Spec Kit is trialled, not adopted | Final | Catches a wrong problem statement before the code; a light template fits the project size |
 | Dagster runs as Docker Compose services next to PostgreSQL, with run storage in PostgreSQL | Final | Docker Compose is the only deployment target; PostgreSQL storage keeps history across restarts (spec 001) |
 | Only ingestion is retried (2 times, 5 minutes apart) | Final | dbt and data-quality failures are deterministic; retrying them hides the error and costs warehouse time (spec 001) |
