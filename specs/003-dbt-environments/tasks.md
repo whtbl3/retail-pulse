@@ -25,11 +25,11 @@ Plan: [plan.md](plan.md)
       `ci-cleanup.yml` on `pull_request` `closed`. Then change `ci.yml` and add `ci-cleanup.yml`.
 - [x] T10: Test `make setup` writes `DBT_DEV_SCHEMA` and keeps an existing one, and notes a profile with
       no `prod` output (R9); change `setup_local.py`.
-- [x] T11: `make check` (ruff + pytest) green; `spec-reviewer` report; ready the PR.
+- [x] T11: `make check` (ruff + pytest) green; spec check report; ready the PR.
 - [ ] T12: Owner, before the first 23:00 run after merge: add the `prod` output and `DBT_DEV_SCHEMA`
       to `~/.dbt/profiles.yml` and `.env`. After it: check AC1 (`make dbt-build`, MARTS last-altered
       unchanged), AC2 (23:00 run), AC4 (`make dbt-full-refresh`, PRESET_READER query), AC5 (REPORTER
       denied on `DBT_<NAME>_MARTS`), AC6 (this PR's `PR_<n>_*` gone after merge).
 - [x] T13: Docs: `docs/phases/12-environments.md`, `docs/README.md` row, notes in phases 00, 05, 06, 07
-      and 09, Project-Spec §10, §11, §13.4, §14, §15 and §17, `CLAUDE.md` commands. Spec status
+      and 09, Project-Spec §10, §11, §13.4, §14, §15 and §17. Spec status
       Implemented.

@@ -6,17 +6,15 @@ this page explains why they look the way they do and how to try GitHub Spec Kit 
 
 ## Why write a spec first
 
-With an AI agent writing most of the code, typing is no longer the slow part. The slow part is finding out
+Typing is rarely the slow part. The slow part is finding out
 late that the code solves the wrong problem. A spec moves that discovery to the start, where fixing it
 means editing a paragraph instead of reworking a PR.
 
-The spec also gives Claude something stable to work against. Without it, every session re-derives the
-intent from the chat, and small misunderstandings pile up. With it, Claude reads `spec.md` and checks its
-work against the acceptance criteria.
+The spec also gives the build something stable to work against. Without it, the intent is re-derived
+from memory or chat, and small misunderstandings pile up. With it, the work is checked against the
+acceptance criteria in `spec.md`.
 
-> **Read more:** [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook)
-> (the plan, design and build stages this follows),
-> [Martin Fowler: Understanding spec-driven development](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html)
+> **Read more:** [Martin Fowler: Understanding spec-driven development](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html)
 > (spec-first, spec-anchored and spec-as-source).
 
 ## What level of "spec-driven" this is
@@ -39,13 +37,10 @@ to be read and reviewed as code.
 | --- | --- | --- |
 | Intent issue | `.github/ISSUE_TEMPLATE/intent.yml` | A GitHub issue form: problem, outcome, out of scope. Forces "what" before "how" |
 | Spec templates | `specs/_template/` | `spec.md`, `plan.md`, `tasks.md` with the sections every feature needs |
-| `/new-feature` skill | `.claude/skills/new-feature/SKILL.md` | Tells Claude how to fill the templates, and where to stop for review |
 | Process | `specs/README.md` | The flow from intent to merged PR, and when to skip it |
-| `spec-reviewer` subagent | `.claude/agents/spec-reviewer.md` | Checks the finished branch against the spec; see [code-review.md](code-review.md) |
+| Spec check | PR template, **Review** section | Checks the finished branch against the spec; see [code-review.md](code-review.md) |
 
-The skill has `disable-model-invocation: true`, so Claude never starts it on its own. You type
-`/new-feature` when you want it. A skill is advice Claude follows, not a hard rule: the review stops depend
-on you reading the spec before approving it.
+The review stops depend on a person reading the spec before approving it.
 
 The spec template has sections that matter for this project in particular: "Data contract changes" (new
 columns, grain or load strategy) and "Decisions" (anything that changes a Final decision in spec §17). The
@@ -54,7 +49,7 @@ undone.
 
 ## Trying GitHub Spec Kit
 
-[Spec Kit](https://github.com/github/spec-kit) is GitHub's toolkit for the same idea. It ships agent skills
+[Spec Kit](https://github.com/github/spec-kit) is GitHub's toolkit for the same idea. It ships agent commands
 (`/speckit-specify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-implement` and more) and keeps its files in
 `.specify/` and `specs/`. The templates here use the same file names (`spec.md`, `plan.md`, `tasks.md`), so the
 output of both is easy to compare.
@@ -64,11 +59,11 @@ Spec Kit is **not installed in this repo**. To try it without changing `main`:
 ```bash
 git switch -c try/spec-kit            # throwaway branch, never merged
 uv tool install specify-cli           # installs the `specify` command
-specify init --here --integration claude
+specify init --here --integration <your agent>
 ```
 
-With `--integration claude`, Spec Kit installs its skills into `.claude/skills/` next to `new-feature`. That is
-why the trial stays on its own branch. The `--integration` key for Claude Code and the flags for an existing project may change between releases.
+Spec Kit installs its commands into your coding agent's config folder. That is why the trial stays on its
+own branch. The `--integration` keys and the flags for an existing project may change between releases.
 Check the [existing-project guide](https://github.github.io/spec-kit/guides/existing-projects.html) and the
 [integrations list](https://github.github.io/spec-kit/reference/integrations.html) before running it.
 
@@ -78,6 +73,6 @@ Then run one small feature through both flows and compare:
 - Whether Spec Kit's `/speckit-clarify` and `/speckit-analyze` catch problems the light template misses.
 - How much of what it generates you would actually keep.
 
-If Spec Kit wins, adopting it is a separate PR that replaces `specs/_template/` and the `/new-feature` skill.
+If Spec Kit wins, adopting it is a separate PR that replaces `specs/_template/`.
 
 > **Read more:** [Spec Kit quickstart](https://github.github.io/spec-kit/quickstart.html).

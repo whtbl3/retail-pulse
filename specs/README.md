@@ -17,13 +17,12 @@ feature spec stays here as the record of why the change was made.
 
 1. **Intent.** Open a GitHub issue with the "Intent" template: the problem, the outcome and what is out
    of scope. No solution yet.
-2. **Spec.** Run `/new-feature <issue number or one-line intent>` in Claude Code. It creates the folder,
-   drafts `spec.md` and lists open questions. You answer them and set `Status: Approved`.
-3. **Plan and tasks.** Run `/new-feature plan NNN`. Claude drafts `plan.md` and `tasks.md` from the
-   approved spec. You review them.
-4. **Build.** Claude works through `tasks.md` on a `feat/NNN-short-name` branch, test first.
-5. **Review and merge.** Before the PR, the `spec-reviewer` subagent checks the branch against the spec
-   and reports each acceptance criterion as Met, Partly or Missing. The PR links the spec folder and that
+2. **Spec.** Copy `_template/` to `specs/NNN-short-name/`, draft `spec.md` and list open questions.
+   Answer them and set `Status: Approved`.
+3. **Plan and tasks.** Draft `plan.md` and `tasks.md` from the approved spec, then review them.
+4. **Build.** Work through `tasks.md` on a `feat/NNN-short-name` branch, test first.
+5. **Review and merge.** Before the PR, a spec check (see [`docs/code-review.md`](../docs/code-review.md))
+   reads the branch against the spec and reports each acceptance criterion as Met, Partly or Missing. The PR links the spec folder and that
    report. Reviewers follow [`REVIEW.md`](../REVIEW.md) and check the code against the acceptance
    criteria, not just the diff. `Status` becomes `Implemented` in the same PR.
 

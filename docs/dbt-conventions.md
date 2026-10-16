@@ -1,11 +1,7 @@
----
-paths:
-  - "dbt/**"
----
-
 # dbt conventions
 
-The model design is in `docs/design/analytical-data-modeling.md` (authoritative) and spec §10.
+The model design is in `docs/design/analytical-data-modeling.md` (authoritative) and spec §10. This page
+lists the conventions every dbt change follows; reviewers check them (see `REVIEW.md`).
 
 - Layers: `stg_` (rename, type, dedupe cursor-boundary rows; views) → `int_` (reusable logic such as
   SCD2; tables) → `dim_` / `fct_` (marts; tables). No business logic in staging.
