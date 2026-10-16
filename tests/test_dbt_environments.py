@@ -262,3 +262,63 @@ def test_dropping_schemas_drops_only_the_target_schemas():
 def test_dropping_schemas_refuses_production(target_name, schema):
     with pytest.raises(Refused, match="refuses to drop production"):
         drop_schemas(target_name, schema, "RETAIL_PULSE")
+
+
+# --- Mart contracts (spec 005, R1, R3, R6, AC1, AC6) ---
+
+
+def uncontracted_marts(manifest: dict) -> list[str]:
+    """Marts whose shape is not enforced: no contract, or a column without a data_type."""
+    found = []
+    for node in models(manifest):
+        if layer(node) != "marts":
+            continue
+        columns = node["columns"].values()
+        enforced = node["config"]["contract"]["enforced"]
+        if not enforced or not columns or any(not c.get("data_type") for c in columns):
+            found.append(node["name"])
+    return sorted(found)
+
+
+def test_every_mart_has_an_enforced_contract(prod):
+    marts = [n for n in models(prod) if layer(n) == "marts"]
+    assert len(marts) >= 10
+    assert uncontracted_marts(prod) == []
+
+
+def test_columns_tested_not_null_are_declared_not_null(prod):
+    """Snowflake enforces not_null constraints; keep them in step with the not_null tests.
+
+    Only a strict test (every row, severity error) becomes a constraint: a test with a `where`
+    filter or `severity: warn` allows some nulls, which the warehouse would reject.
+    """
+    tested = {
+        (n["attached_node"], n["column_name"])
+        for n in prod["nodes"].values()
+        if n["resource_type"] == "test"
+        and n.get("test_metadata", {}).get("name") == "not_null"
+        and not n["config"].get("where")
+        and n["config"]["severity"].lower() == "error"
+    }
+    for node in models(prod):
+        if layer(node) != "marts":
+            continue
+        for name, column in node["columns"].items():
+            declared = any(c["type"] == "not_null" for c in column.get("constraints", []))
+            assert declared == ((node["unique_id"], name) in tested), f"{node['name']}.{name}"
+
+
+def test_a_new_mart_without_a_contract_is_caught(tmp):
+    project = tmp / "project-contract"
+    shutil.copytree(
+        DBT_DIR, project, ignore=shutil.ignore_patterns("target", "logs", "dbt_packages")
+    )
+    (project / "dbt_packages").symlink_to(DBT_DIR / "dbt_packages")
+    (project / "models" / "marts" / "fct_new.sql").write_text("select 1 as id\n")
+    out = tmp / "target-contract"
+    result = run_dbt(
+        ["parse", "--target-path", str(out)], tmp, DBT_DIR / "ci", "prod", project=project
+    )
+    assert result.returncode == 0, result.stdout[-3000:]
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert uncontracted_marts(manifest) == ["fct_new"]

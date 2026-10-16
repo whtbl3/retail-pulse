@@ -2,57 +2,87 @@ version: 2
 
 models:
   - name: dim_store
+    config:
+      contract: {enforced: true}
     description: Store dimension (Type 1), one row per store plus a -2 "Unknown" member for keys not yet in the dimension.
     columns:
       - name: store_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Surrogate key (hash of store_id); -2 for Unknown.
         data_tests:
           - unique
           - not_null
       - name: store_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Source store ID (natural key); -2 for Unknown.
         data_tests:
           - unique
           - not_null
+      - name: store_name
+        data_type: varchar
+        description: Store name.
+      - name: address
+        data_type: varchar
+        description: Store address.
+      - name: phone_number
+        data_type: varchar
+        description: Store phone number.
   - name: dim_payment_method
+    config:
+      contract: {enforced: true}
     description: Payment method dimension (Type 1), one row per method plus a -2 "Unknown" member for keys not yet in the dimension.
     columns:
       - name: payment_method_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Surrogate key (hash of payment_method_id); -2 for Unknown.
         data_tests:
           - unique
           - not_null
       - name: payment_method_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Source payment method ID (natural key); -2 for Unknown.
         data_tests:
           - unique
           - not_null
       - name: payment_method_name
+        data_type: varchar
         description: Payment method name (cash, card, e_wallet, bank_transfer); "Unknown" for the -2 member.
         data_tests:
           - accepted_values:
               values: ['cash', 'card', 'e_wallet', 'bank_transfer', 'Unknown']
   - name: dim_promotion
+    config:
+      contract: {enforced: true}
     description: >
       Promotion dimension (Type 1), one row per promotion. Two special members: -1 "No promotion"
       for line items without a promotion, and -2 "Unknown" for keys not yet in the dimension.
     columns:
       - name: promotion_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Surrogate key (hash of promotion_id); -1 for No promotion, -2 for Unknown.
         data_tests:
           - unique
           - not_null
       - name: promotion_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Source promotion ID (natural key); -1 for No promotion, -2 for Unknown.
         data_tests:
           - unique
           - not_null
       - name: promotion_type
+        data_type: varchar
         description: Discount type, percentage or fixed_amount; null for the special members -1 and -2.
         data_tests:
           - accepted_values:
               values: ['fixed_amount', 'percentage']
       - name: promotion_amount
+        data_type: number
         description: Discount amount, a percent for percentage or an amount per unit for fixed_amount; null for -1 and -2.
         data_tests:
           - dbt_utils.accepted_range:
@@ -60,11 +90,21 @@ models:
                 min_value: 0
                 inclusive: false
       - name: promotion_label
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Display label, for example "20% off" or "5,000 VND off"; "No promotion" for -1 and "Unknown" for -2.
         data_tests:
           - not_null
         
+      - name: start_date
+        data_type: date
+        description: First day of the promotion; null for -1 and -2.
+      - name: end_date
+        data_type: date
+        description: Last day of the promotion; null for -1 and -2.
   - name: dim_product
+    config:
+      contract: {enforced: true}
     description: Product dimension (SCD2), one row per version, plus a -2 "Unknown" member. SCD2 integrity (no overlaps, one current version) is tested in int_product_scd2.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -72,16 +112,23 @@ models:
             combination_of_columns: [product_id, valid_from]
     columns:
       - name: product_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Surrogate key (hash of product_id and valid_from); -2 for Unknown.
         data_tests: [unique, not_null]
       - name: product_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Source product ID (natural key); repeats across versions; -2 for Unknown.
         data_tests: [not_null]
       - name: product_sku
+        data_type: varchar
         description: Latest product SKU (Type 1, same in every version).
       - name: product_name
+        data_type: varchar
         description: Latest product name (Type 1, same in every version).
       - name: category_id
+        data_type: number
         description: Category ID in this version (Type 2); null for Unknown.
         data_tests:
           - relationships:
@@ -89,10 +136,13 @@ models:
                 to: ref('stg_category')
                 field: category_id
       - name: category_name
+        data_type: varchar
         description: Current category name (Type 1, from stg_category by the version's category_id); Unknown for the -2 row.
       - name: brand_name
+        data_type: varchar
         description: Current brand name (Type 1, from stg_brand by the version's brand_id); Unknown for the -2 row.
       - name: brand_id
+        data_type: number
         description: Brand ID in this version (Type 2); null for Unknown.
         data_tests:
           - relationships:
@@ -100,20 +150,30 @@ models:
                 to: ref('stg_brand')
                 field: brand_id
       - name: unit_price
+        data_type: number
         description: Selling price in this version (Type 2); null for Unknown.
       - name: unit_cost
+        data_type: number
         description: Unit cost in this version (Type 2); null for Unknown, so transactions assigned to Unknown also have a null cost.
       - name: valid_from
+        data_type: timestamp_tz
+        constraints: [{type: not_null}]
         description: When the version takes effect (inclusive); 1900-01-01 for the first version.
         data_tests: [not_null]
       - name: valid_to
+        data_type: timestamp_tz
+        constraints: [{type: not_null}]
         description: When the version stops being valid (exclusive); 9999-12-31 for the current version.
         data_tests: [not_null]
       - name: is_current
+        data_type: boolean
+        constraints: [{type: not_null}]
         description: TRUE for the current version.
         data_tests: [not_null]
 
   - name: dim_employee
+    config:
+      contract: {enforced: true}
     description: Employee dimension (SCD2 on store_id), one row per version, plus a -2 "Unknown" member.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -121,12 +181,17 @@ models:
             combination_of_columns: [employee_id, valid_from]
     columns:
       - name: employee_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Surrogate key (hash of employee_id and valid_from); -2 for Unknown.
         data_tests: [unique, not_null]
       - name: employee_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Source employee ID (natural key); repeats across versions; -2 for Unknown.
         data_tests: [not_null]
       - name: store_id
+        data_type: number
         description: Store worked at in this version (Type 2); -2 for Unknown.
         data_tests:
           - relationships:
@@ -134,39 +199,55 @@ models:
                 to: ref('dim_store')
                 field: store_id
       - name: employee_name
+        data_type: varchar
         description: Latest full name (Type 1).
       - name: salary
+        data_type: number
         description: Latest salary (Type 1); null for Unknown.
         config:
           meta: {pii: true}
       - name: address
+        data_type: varchar
         description: Latest address (Type 1); null for Unknown.
         config:
           meta: {pii: true}
       - name: start_date
+        data_type: date
         description: Employment start date (Type 1).
       - name: end_date
+        data_type: date
         description: Employment end date (Type 1); null if still employed.
       - name: valid_from
+        data_type: timestamp_tz
+        constraints: [{type: not_null}]
         description: When the version takes effect (inclusive); 1900-01-01 for the first version.
         data_tests: [not_null]
       - name: valid_to
+        data_type: timestamp_tz
+        constraints: [{type: not_null}]
         description: When the version stops being valid (exclusive); 9999-12-31 for the current version.
         data_tests: [not_null]
       - name: is_current
+        data_type: boolean
+        constraints: [{type: not_null}]
         description: TRUE for the current version.
         data_tests: [not_null]
 
   - name: dim_date
+    config:
+      contract: {enforced: true}
     # MetricFlow needs a daily time spine; dim_date already has one row per day
     time_spine:
       standard_granularity_column: full_date
     description: Date dimension, one row per day for date_days days from date_start, plus a -2 "Unknown" member. Generated from vars; reads no source. Month and weekday labels are in English.
     columns:
       - name: date_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Numeric date key YYYYMMDD (for example 20250301); -2 for Unknown.
         data_tests: [unique, not_null]
       - name: full_date
+        data_type: date
         granularity: day
         description: Date as DATE; null for Unknown.
         data_tests:
@@ -174,50 +255,71 @@ models:
           - not_null:
               config: {where: "date_key <> -2"}
       - name: year
+        data_type: number
         description: Year.
       - name: quarter
+        data_type: number
         description: Quarter of the year (1-4).
       - name: month
+        data_type: number
         description: Month of the year (1-12).
       - name: month_name
+        data_type: varchar
         description: Month name in English, for example "March".
       - name: day_of_month
+        data_type: number
         description: Day of the month (1-31).
       - name: day_of_week
+        data_type: number
         description: ISO day of the week (1 = Monday ... 7 = Sunday).
       - name: day_name
+        data_type: varchar
         description: Weekday name in English, for example "Monday".
       - name: week_of_year
+        data_type: number
         description: ISO week of the year.
       - name: is_weekend
+        data_type: boolean
         description: TRUE for Saturday or Sunday.
 
   - name: dim_time
+    config:
+      contract: {enforced: true}
     description: Time-of-day dimension, 1,440 rows (one per minute of the day) plus a -2 "Unknown" member. Generated with GENERATOR; reads no source.
     columns:
       - name: time_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Numeric time key HHMM (for example 1435 is 14:35); -2 for Unknown.
         data_tests: [unique, not_null]
       - name: time_of_day
+        data_type: time
         description: Time as TIME; null for Unknown.
       - name: hour_24
+        data_type: number
         description: Hour 0-23.
         data_tests:
           - dbt_utils.accepted_range:
               arguments: {min_value: 0, max_value: 23}
       - name: minute
+        data_type: number
         description: Minute 0-59.
         data_tests:
           - dbt_utils.accepted_range:
               arguments: {min_value: 0, max_value: 59}
       - name: hour_12
+        data_type: number
         description: Hour 1-12 (12-hour clock).
       - name: am_pm
+        data_type: varchar
         description: AM or PM; "Unknown" for -2.
       - name: day_part
+        data_type: varchar
         description: Part of day (Morning, Afternoon, Evening, Night); "Unknown" for -2.
 
   - name: fct_sales
+    config:
+      contract: {enforced: true}
     description: Sales fact (transaction fact), one row per line item of a completed invoice. All money and quantity measures are additive except regular_price and unit_cost (unit prices). Ratios (gross margin, average basket value) are semantic-layer metrics (models/semantic/sales.yml), not stored in the fact.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -235,74 +337,106 @@ models:
           arguments: {expression: "coupon_amount >= 0"}
     columns:
       - name: date_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Date key in local time (local_tz), YYYYMMDD.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_date'), field: date_key}}
       - name: time_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Time key in local time (local_tz), HHMM.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_time'), field: time_key}}
       - name: product_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Key of the product version valid at transaction_ts; -2 if none matches.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_product'), field: product_key}}
       - name: store_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Store key; -2 if not yet in the dimension.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_store'), field: store_key}}
       - name: employee_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Key of the employee version valid at transaction_ts; -2 if none matches.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_employee'), field: employee_key}}
       - name: payment_method_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Payment method key; -2 if not yet in the dimension.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_payment_method'), field: payment_method_key}}
       - name: promotion_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Promotion key; -1 if the line has no promotion, -2 if it has an ID that is not yet in the dimension.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_promotion'), field: promotion_key}}
       - name: transaction_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Invoice ID (degenerate dimension).
         data_tests: [not_null]
       - name: line_number
+        data_type: number
+        constraints: [{type: not_null}]
         description: Line number within the invoice (degenerate dimension).
         data_tests: [not_null]
       - name: transaction_ts
+        data_type: timestamp_tz
+        constraints: [{type: not_null}]
         description: Transaction time (UTC); used for range joins with the SCD2 dimensions.
         data_tests: [not_null]
       - name: quantity
+        data_type: number
         description: Quantity sold. Additive.
       - name: regular_price
+        data_type: number
         description: Unit selling price at the time of sale. Not additive.
       - name: unit_cost
+        data_type: number
         description: Unit cost of the product version valid at transaction_ts, stored in the fact at load time; null if product_key is -2. Not additive.
         data_tests:
           - not_null:
               config:
                 severity: warn   # late-arriving products are acceptable; see docs/phases/05-dbt.md
       - name: gross_amount
+        data_type: number
         description: quantity × regular_price. Additive.
       - name: discount_amount
+        data_type: number
         description: Promotion discount applied per unit (percentage or fixed_amount); 0 for -1 and -2. Additive.
       - name: coupon_amount
+        data_type: number
         description: Coupon discount, applied once per line (not multiplied by quantity). Additive.
       - name: net_amount
+        data_type: number
         description: gross_amount − discount_amount − coupon_amount. Additive.
       - name: cost_amount
+        data_type: number
         description: quantity × unit_cost. Additive.
       - name: gross_profit
+        data_type: number
         description: net_amount − cost_amount; can be negative when discounts exceed the gross margin. Additive.
       - name: source_updated_at
+        data_type: timestamp_tz
         description: The later update timestamp of the line item and the invoice; the watermark for the next incremental run.
   - name: fct_sales_enriched
+    config:
+      contract: {enforced: true}
     description: fct_sales at the same grain (one row per completed line item) with the dimension attributes the dashboard slices by. The semantic layer defines every metric on this model (models/semantic/sales.yml). Product attributes come from the version valid at the time of sale. Same row count and totals as fct_sales (tested in assert_fct_sales_enriched_matches_fct_sales).
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -310,60 +444,93 @@ models:
             combination_of_columns: [transaction_id, line_number]
     columns:
       - name: transaction_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Invoice ID (degenerate dimension).
         data_tests: [not_null]
       - name: line_number
+        data_type: number
+        constraints: [{type: not_null}]
         description: Line number within the invoice.
         data_tests: [not_null]
       - name: transaction_ts
+        data_type: timestamp_tz
         description: Transaction time in UTC, as in fct_sales.
       - name: full_date
+        data_type: date
         description: Local sale date (Asia/Ho_Chi_Minh) from dim_date; null for the -2 Unknown date.
       - name: year
+        data_type: number
         description: Calendar year of full_date, from dim_date.
       - name: month
+        data_type: number
         description: Month number of full_date, from dim_date.
       - name: month_name
+        data_type: varchar
         description: English month name, from dim_date.
       - name: day_name
+        data_type: varchar
         description: English weekday name, from dim_date.
       - name: is_weekend
+        data_type: boolean
         description: True on Saturday and Sunday, from dim_date.
       - name: store_name
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Store name from dim_store.
         data_tests: [not_null]
       - name: product_name
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Product name from dim_product.
         data_tests: [not_null]
       - name: category_name
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Current name of the category that the product version valid at the time of sale belongs to.
         data_tests: [not_null]
       - name: brand_name
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Current name of the brand that the product version valid at the time of sale belongs to.
         data_tests: [not_null]
       - name: promotion_label
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Promotion label from dim_promotion; "No promotion" when the line had none.
         data_tests: [not_null]
       - name: promotion_type
+        data_type: varchar
         description: percentage or fixed_amount, from dim_promotion; null for "No promotion" and Unknown.
       - name: payment_method_name
+        data_type: varchar
+        constraints: [{type: not_null}]
         description: Payment method from dim_payment_method.
         data_tests: [not_null]
       - name: quantity
+        data_type: number
         description: Units sold. Additive.
       - name: gross_amount
+        data_type: number
         description: quantity × regular_price. Additive.
       - name: discount_amount
+        data_type: number
         description: Promotion discount for the line. Additive.
       - name: coupon_amount
+        data_type: number
         description: Coupon discount for the line. Additive.
       - name: net_amount
+        data_type: number
         description: gross_amount − discount_amount − coupon_amount. Additive.
       - name: cost_amount
+        data_type: number
         description: quantity × unit_cost at the time of sale. Additive.
       - name: gross_profit
+        data_type: number
         description: net_amount − cost_amount. Additive.
   - name: fct_store_headcount_monthly
+    config:
+      contract: {enforced: true}
     description: >
       Periodic snapshot fact (spec 004): one row per store per calendar month, from January 2020 to the
       current month, including months with no staff or no sales. Headcount comes from employee history
@@ -383,46 +550,67 @@ models:
           arguments: {expression: "opening_headcount >= 0 and closing_headcount >= 0"}
     columns:
       - name: store_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: Store surrogate key (dim_store). The -2 Unknown member has no rows.
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_store'), field: store_key}}
       - name: store_id
+        data_type: number
+        constraints: [{type: not_null}]
         description: Source store ID.
         data_tests:
           - not_null
       - name: store_name
+        data_type: varchar
         description: Store name, copied from dim_store so Preset can group without a join.
       - name: month_start
+        data_type: date
+        constraints: [{type: not_null}]
         description: First day of the calendar month (local time).
         data_tests:
           - not_null
       - name: month_start_date_key
+        data_type: number
+        constraints: [{type: not_null}]
         description: date_key of month_start in dim_date (YYYYMMDD).
         data_tests:
           - not_null
           - relationships: {arguments: {to: ref('dim_date'), field: date_key}}
       - name: opening_headcount
+        data_type: number
         description: Employees employed at the store at the end of the day before the month starts; equals the previous month's closing_headcount. Semi-additive, never sum over months.
       - name: closing_headcount
+        data_type: number
         description: Employees employed at the store at the end of the month's last day (of the as-of day for the current month). Someone whose last working day is the month's last day has left and is not counted. Semi-additive, never sum over months.
       - name: joiners
+        data_type: number
         description: Employees whose start_date is in the month, at their store at the end of that day. Additive.
       - name: leavers
+        data_type: number
         description: Employees whose end_date (last working day) is in the month, at their store on that day. Additive.
       - name: transfers_in
+        data_type: number
         description: Moves into the store during the month by employed staff, from employee history. Additive.
       - name: transfers_out
+        data_type: number
         description: Moves out of the store during the month by employed staff. Additive.
       - name: average_headcount
+        data_type: number
         description: (opening_headcount + closing_headcount) / 2, the denominator of revenue_per_employee. Summed over several rows it gives employee-months.
       - name: net_revenue
+        data_type: number
         description: Net amount of completed sales at the store in the month (local date), from fct_sales; 0 when there were none. Additive.
       - name: is_month_closed
+        data_type: boolean
+        constraints: [{type: not_null}]
         description: FALSE only for the current month, whose values are as of as_of_date and still change.
         data_tests:
           - not_null
       - name: as_of_date
+        data_type: date
+        constraints: [{type: not_null}]
         description: The local day the snapshot was built for; the current month's values are as of the end of this day.
         data_tests:
           - not_null

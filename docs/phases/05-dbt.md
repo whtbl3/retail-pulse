@@ -28,6 +28,7 @@ every build. It reads RAW and never writes to it.
 | Incremental model | `fct_sales` only processes rows newer than what it already holds and merges them on `(transaction_id, line_number)`, instead of rebuilding the table |
 | Materialization | How dbt stores a model: view (staging), table (intermediate, dimensions) or incremental (`fct_sales`) |
 | Data test | A query that returns bad rows; zero rows means pass. `dbt build` runs them after each model |
+| Model contract | The column names and types a model promises to return, declared in YAML. With `contract: {enforced: true}` dbt checks the query against it before creating the table and fails on any difference |
 
 ## Step 1: Connection and `dbt debug`
 
@@ -395,6 +396,66 @@ thousand rows, a few seconds). The alternative is to widen the incremental filte
 full refresh. Revenue (`net_amount`) is still complete. The `not_null` test on `unit_cost` has `severity: warn` because
 late-arriving data is an accepted case, so watch for warnings when running. The `not_null` and `relationships` tests do
 not catch `-2` because it is a valid value.
+
+### Mart contracts: the shape of a mart is checked before it is built
+
+**Why.** Data tests check values: no nulls, no duplicates, valid keys. They do not notice that a column was renamed,
+dropped or changed from a number to text, because the new table still has valid values. Preset and the semantic layer
+read the marts by column name and type, so such a change used to pass every test and CI, and showed up only as a broken
+chart after the 23:00 run. Since spec 005 (`specs/005-mart-contracts/`) every mart (7 dimensions, 3 facts) declares its
+shape and dbt enforces it.
+
+**How it is declared.** In `dbt/models/marts/___models.yml` each mart has a contract and each column a type:
+
+```yaml
+- name: dim_store
+  config:
+    contract: {enforced: true}
+  columns:
+    - name: store_key
+      data_type: number
+      constraints: [{type: not_null}]
+      data_tests: [unique, not_null]
+    - name: store_name
+      data_type: varchar
+```
+
+Before dbt creates the table, it runs the model query with no rows, reads the columns Snowflake returns and compares
+them with the YAML. On any difference it stops and prints a table like this one (example output):
+
+```text
+This model has an enforced contract that failed.
+| column_name | definition_type | contract_type | mismatch_reason       |
+| ----------- | --------------- | ------------- | --------------------- |
+| store_name  |                 | TEXT          | missing in definition |
+| store_nm    | TEXT            |               | missing in contract   |
+```
+
+Three things to know:
+
+- **Only base types are compared.** `number` matches `NUMBER(12,2)` and `NUMBER(38,0)`; `varchar` matches any length.
+  A change of precision is not caught; a change of kind (number to text, date to timestamp) is.
+- **Only `not_null` is a real warehouse rule on Snowflake.** The `not_null` constraint is added to the columns that
+  already have a strict `not_null` test, and Snowflake rejects a null on insert. A test with a `where` filter or
+  `severity: warn` means some nulls are allowed (the `-2` Unknown row of `dim_date.full_date`, `fct_sales.unit_cost`
+  for late-arriving products), so those columns get no constraint; the first CI run failed with
+  `NULL result in a non-nullable column` on `dim_date` until this was fixed. Snowflake accepts `unique`, `primary_key`
+  and `foreign_key` constraints but never checks them, so the `unique` and `relationships` tests stay.
+- **The incremental fact needs `on_schema_change='fail'`.** dbt does not allow a contract on an incremental model that
+  could change its columns silently. A normal run of `fct_sales` merges as before; a shape change stops the run.
+
+A pytest (`tests/test_dbt_environments.py`, CI job `test`) parses the project and fails, naming the model, when a model
+under `models/marts` has no enforced contract or a column without `data_type`. A new mart cannot skip this step.
+
+**How to add or change a mart column on purpose.**
+
+1. Change the model SQL.
+2. In the same pull request, add or change the column in `___models.yml` with its `data_type` (and a `not_null`
+   constraint if you add a `not_null` test).
+3. `dbt-slim-ci` builds the mart; if the declared type is wrong, the failure table shows the type Snowflake returned.
+4. For a dimension nothing else is needed: the table is rebuilt on the next run. For `fct_sales`, the next incremental
+   run fails on purpose; run the `fct_sales_full_refresh` job in Dagster (or `make dbt-full-refresh`) once after the
+   merge to recreate the table with the new column. RAW is not touched.
 
 ## Step 6: Lineage and review
 
