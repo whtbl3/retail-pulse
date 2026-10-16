@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         An intent is the first step of a feature (see `specs/README.md`). Keep it short.
-        Once it is agreed, run `/new-feature <this issue number>` in Claude Code to draft the spec.
+        Once it is agreed, copy `specs/_template/` to `specs/NNN-short-name/` and draft the spec.
   - type: textarea
     id: problem
     attributes:

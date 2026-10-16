@@ -60,11 +60,11 @@ test: up ## Run pytest (creates a temporary <PG_DB>_test DB, drops it afterwards
 	uv run pytest
 
 lint: ## Ruff: autofix and format
-	uv run ruff check --fix src tests .claude/hooks && uv run ruff format src tests .claude/hooks
+	uv run ruff check --fix src tests && uv run ruff format src tests
 
 check: ## Quality gate before opening a PR: ruff (no fixes) then pytest; same as CI
-	uv run ruff check src tests .claude/hooks
-	uv run ruff format --check src tests .claude/hooks
+	uv run ruff check src tests
+	uv run ruff format --check src tests
 	$(MAKE) test
 
 clean-raw: ## Delete Snowflake RAW + dlt state without confirmation

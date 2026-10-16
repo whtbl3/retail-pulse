@@ -136,7 +136,7 @@ Done during planning, then removed from the branch:
 - New `docs/phases/11-semantic-layer.md` and a row in `docs/README.md`: what a semantic layer is, how to
   add a metric, how to sync, and the one-time Preset steps.
 - `docs/phases/07-preset.md`: a note that the virtual dataset was replaced in phase 11.
-- `make help` and `CLAUDE.md` (`make preset-zip`).
+- `make help` (`make preset-zip`).
 
 ## Changes during the build
 

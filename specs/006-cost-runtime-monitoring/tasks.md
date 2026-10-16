@@ -14,7 +14,7 @@ Plan: [plan.md](plan.md)
 - [ ] T6: pytest for the success sensor (run time, credits, Slack down, no webhook); slowest models
       from `run_results.json` in the dbt asset. Then the code. Passes.
 - [ ] T7: Semantic model and metric; pytest for the third Preset dataset; `preset_export.py`. Passes.
-- [ ] T8: `make check` green; CI green; `spec-reviewer` report.
+- [ ] T8: `make check` green; CI green; spec check report.
 - [ ] T9: Docs: phase 14 guide, `docs/README.md`, runbook, phase 11, Project-Spec sections. Spec status
       Implemented.
 - [ ] T10: Owner, after merge and the 23:00 run: compare one day of credits with Snowsight (AC1), check

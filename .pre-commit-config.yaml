@@ -16,7 +16,7 @@ repos:
       # Block accidental commits of private keys (Snowflake .p8 key pairs)
       - id: detect-private-key
 
-  # Ruff runs through uv to use the exact version in uv.lock, like CI and the Claude hook
+  # Ruff runs through uv to use the exact version in uv.lock, like CI
   - repo: local
     hooks:
       - id: ruff-check

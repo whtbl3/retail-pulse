@@ -19,7 +19,7 @@ Plan: [plan.md](plan.md)
       on its own dataset, `revenue_per_employee` as one expression, semi-additive metrics as a plain
       sum with warning text. Run: fails.
 - [x] T8: Change `preset_export.py` and the `preset-zip` help text. T7 passes.
-- [x] T9: `make check` green; CI slim build green on the PR (dbt tests on real data); `spec-reviewer`
+- [x] T9: `make check` green; CI slim build green on the PR (dbt tests on real data); spec check
       report.
 - [x] T10: Docs: `docs/phases/13-headcount-snapshot.md` with the worked example, `docs/README.md` row,
       phases 07 and 11, `design/analytical-data-modeling.md`, Project-Spec §10.2, §10.6, §12, §14, §17.
