@@ -1,7 +1,6 @@
 # Review instructions
 
-How to review a pull request in this repo, for people and for Claude. Project context lives in `CLAUDE.md`
-and `docs/Project-Spec.md`; this file only says what to flag and how hard.
+How to review a pull request in this repo. Project context lives in `docs/Project-Spec.md`; this file only says what to flag and how hard.
 
 ## What Important means here
 
@@ -28,7 +27,7 @@ Everything else is Nit at most: naming, style, wording, refactoring ideas, missi
   each one that is not. Files changed that `plan.md` does not mention are worth one line, not a finding.
 - **Tests for new behavior.** New Python behavior has a pytest; new dbt models have column tests in the
   folder's `___models.yml`; a bug fix has a test that fails without the fix.
-- **dbt conventions** in `.claude/rules/dbt.md`: unknown members use `-2`, fact joins `COALESCE` missing
+- **dbt conventions** in `docs/dbt-conventions.md`: unknown members use `-2`, fact joins `COALESCE` missing
   keys to `-2`, `date_key` / `time_key` use `var('local_tz')`.
 - **Docs follow behavior.** A new command or setting appears in `make help` and the relevant
   `docs/phases/` or `docs/design/` page.

@@ -20,8 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv run ruff check src tests .claude/hooks
-      - run: uv run ruff format --check src tests .claude/hooks
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
 
   # pytest against a real PostgreSQL (same as `make test`); no Snowflake needed
   test:

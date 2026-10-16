@@ -138,4 +138,4 @@ done once by the owner after the merge, written as tasks.
 - `docs/phases/05-dbt.md` (commands now build dev), `06-dagster.md` (prod target), `07-preset.md`
   (grant now declared in dbt; future grant kept as safety net), `09-dataops-ci.md` (PR schemas kept
   until close), `00-environment-setup.md` (`DBT_DEV_SCHEMA`, profile migration).
-- `CLAUDE.md` commands list; `make help` text.
+- `make help` text.
